@@ -48,6 +48,29 @@ const registerSchema = new mongoose.Schema(
       required: true,
       minlength: 6,
     },
+
+    // ⭐ FCM TOKEN
+    fcmToken: {
+      type: String,
+      default: null,
+    },
+
+    // ⭐ OTP
+    otp: {
+      type: String,
+      default: null,
+    },
+
+    otpExpiry: {
+      type: Date,
+      default: null,
+    },
+
+    // ⭐ Verify Status
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true },
 );
@@ -57,5 +80,15 @@ registerSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
   this.password = await bcrypt.hash(this.password, 10);
 });
+
+registerSchema.methods.generateOtp = function () {
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+  this.otp = otp;
+  this.otpExpiry = Date.now() + 5 * 60 * 1000; // 5 mins
+
+  return otp;
+};
+
 
 module.exports = mongoose.model("Register", registerSchema);

@@ -6,3 +6,6 @@ node_modules/
 .env.dev
 .env.prod
 .env.uat
+
+#firebase-service file
+firebase-services.json
