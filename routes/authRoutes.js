@@ -13,8 +13,8 @@ router.get("/profile", auth, (req, res) => {
 });
 
 // Admin only
-router.get("/admin", auth, isAdmin, (req, res) => {
-  res.json({ msg: "Welcome Admin" });
-});
+// router.get("/admin", auth, isAdmin, (req, res) => {
+//   res.json({ msg: "Welcome Admin" });
+// });
 
 module.exports = router;
