@@ -12,9 +12,9 @@ router.get("/profile", auth, (req, res) => {
   res.json({ msg: "User profile", user: req.user });
 });
 
-// // Admin only
-// router.get("/admin", auth, isAdmin, (req, res) => {
-//   res.json({ msg: "Welcome Admin" });
-// });
+// Admin only
+router.get("/admin", auth, isAdmin, (req, res) => {
+  res.json({ msg: "Welcome Admin" });
+});
 
 module.exports = router;
