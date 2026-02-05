@@ -9,3 +9,4 @@ node_modules/
 
 #firebase-service file
 firebase-services.json
+firebase-services-dev.json
