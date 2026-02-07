@@ -4,11 +4,11 @@ let serviceAccount;
 
 switch (process.env.NODE_ENV) {
 
-  case "production":
-    serviceAccount = require("../firebase-services.json");
+  case "prod":
+    serviceAccount = require("../firebase-services-prod.json");
     break;
 
-  case "development":
+  case "dev":
     serviceAccount = require("../firebase-services-dev.json");
     break;
 
