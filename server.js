@@ -11,8 +11,13 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+app.use("/uploads", express.static("uploads"));
+
 app.use("/api/auth",require("./routes/authRoutes"));
 app.use("/api/auth", require('./routes/adminAuth'));
+
+
+app.use("/api/products", require("./routes/productRoutes"));
 
 
 const PORT = process.env.PORT || 5000;
