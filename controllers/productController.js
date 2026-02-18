@@ -4,6 +4,8 @@ const XLSX = require("xlsx");
 /* CREATE PRODUCT */
 exports.createProduct = async (req, res) => {
   try {
+    // console.log("--- BODY DB ---:", req.body);
+    // console.log("--- FILE DB ---:", req.file);
     const image = req.file ? req.file.path : null;
 
     const product = await Product.create({
@@ -30,7 +32,7 @@ exports.updateProduct = async (req, res) => {
   const updated = await Product.findByIdAndUpdate(
     req.params.id,
     { ...req.body, ...(image && { image }) },
-    { new: true }
+    { new: true },
   );
 
   res.json(updated);
