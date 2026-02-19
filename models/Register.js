@@ -6,7 +6,7 @@ const registerSchema = new mongoose.Schema(
     role: {
       type: String,
       required: true,
-      enum: ["Distributor", "FSE", "Retailer"],
+      enum: ["Distributor", "FSE", "Retailer", "MarketingManager", "MarketingExecutive"],
     },
 
     state: {
