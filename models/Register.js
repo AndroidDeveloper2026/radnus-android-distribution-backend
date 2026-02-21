@@ -1,12 +1,18 @@
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
+const bcrypt = require("bcrypt");
 
 const registerSchema = new mongoose.Schema(
   {
     role: {
       type: String,
       required: true,
-      enum: ["Distributor", "FSE", "Retailer", "MarketingManager", "MarketingExecutive"],
+      enum: [
+        "Distributor",
+        "FSE",
+        "Retailer",
+        "MarketingManager",
+        "MarketingExecutive",
+      ],
     },
 
     state: {
@@ -71,6 +77,14 @@ const registerSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+
+    resetOtp: {
+      type: String,
+    },
+    resetOtpExpiry: {
+      type: Date,
+    },
+    
   },
   { timestamps: true },
 );
@@ -95,8 +109,6 @@ registerSchema.methods.generateOtp = function () {
   return otp;
 };
 
-
-
 // registerSchema.methods.generateOtp = function () {
 //   const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -105,6 +117,5 @@ registerSchema.methods.generateOtp = function () {
 
 //   return otp;
 // };
-
 
 module.exports = mongoose.model("Register", registerSchema);

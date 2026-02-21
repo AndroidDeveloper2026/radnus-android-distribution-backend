@@ -1,83 +1,132 @@
-const bcrypt = require("bcryptjs");
+const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-
+const crypto = require("crypto");
 const Register = require("../models/Register");
-const User = require("../models/User");
+// const User = require("../models/User");
 const admin = require("../config/firebaseAdmin");
+const transporter = require("../config/mailer");
 
-//OTP verify
-// exports.verifyOtp = async (req, res) => {
-//   const { mobile, otp } = req.body;
+exports.forgotPassword = async (req, res) => {
+  try {
+    // console.log("(forgotpassword) REQ BODY:", req.body);
+    const { email } = req.body;
 
-//   const user = await Register.findOne({ mobile });
+    if (!email) {
+      return res.status(400).json({
+        message: "Email is required",
+      });
+    }
 
-//   if (!user) {
-//     return res.status(404).json({ message: "User not found" });
-//   }
+    const user = await Register.findOne({ email });
 
-//   if (user.otp !== otp) {
-//     return res.status(400).json({ message: "Invalid OTP" });
-//   }
+    if (!user) {
+      return res.json({
+        success: true,
+        message: "If email exists, OTP sent",
+      });
+    }
 
-//   if (user.otpExpiry < Date.now()) {
-//     return res.status(400).json({ message: "OTP expired" });
-//   }
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-//   user.otp = null;
-//   user.otpExpiry = null;
+    // 🔐 hash OTP
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
-//   await user.save();
+    user.resetOtp = hashedOtp;
+    user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
 
-//   res.json({ message: "OTP verified successfully" });
-// };
+    await user.save();
 
-//OTP verify
-// exports.verifyOtp = async (req, res) => {
-//   let { mobile, otp } = req.body;
+    // 👉 TODO: send email (use nodemailer)
+    // console.log("RESET OTP:", otp);
 
-//  console.log("DB OTP:", `"${otp}"`);
-//   console.log("DB mobile :", `"${mobile}"`);
+    // ✅ SEND EMAIL HERE
 
-//   // 🔥 NORMALIZE
-//   otp = otp.toString().trim();
-//  console.log("DB OTP trim:", `"${otp}"`)
-//   const user = await Register.findOne({ mobile });
+    await transporter.sendMail({
+      from: `"Radnus Distribution App" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "Password Reset OTP",
+      html: `
+    <h2>Password Reset</h2>
+    <p>Your OTP is:</p>
+    <h1>${otp}</h1>
+    <p>This OTP expires in 10 minutes.</p>
+  `,
+    });
 
-//   if (!user) {
-//     return res.status(404).json({
-//       success: false,
-//       message: "User not found",
-//     });
-//   }
+    res.json({
+      success: true,
+      message: "OTP sent to email",
+      // otp, //remove for product
+    });
+  } catch (err) {
+    console.error("FORGOT PASSWORD ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
 
-//   console.log("REQ OTP:", `"${otp}"`);
-//   console.log("DB OTP :", `"${user.otp}"`);
+exports.verifyResetOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
 
-//   if (!user.otp || user.otp.toString().trim() !== otp) {
-//     return res.status(400).json({
-//       success: false,
-//       message: "Invalid OTP",
-//     });
-//   }
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
-//   if (user.otpExpiry < Date.now()) {
-//     return res.status(400).json({
-//       success: false,
-//       message: "OTP expired",
-//     });
-//   }
+    const user = await Register.findOne({
+      email,
+      resetOtp: hashedOtp,
+      resetOtpExpiry: { $gt: Date.now() },
+    });
 
-//   user.isVerified = true;
-//   user.otp = null;
-//   user.otpExpiry = null;
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired OTP",
+      });
+    }
 
-//   await user.save();
+    res.json({
+      success: true,
+      message: "OTP verified",
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
 
-//   return res.json({
-//     success: true,
-//     message: "OTP verified successfully",
-//   });
-// };
+exports.resetPassword = async (req, res) => {
+  try {
+    const { email, otp, password } = req.body;
+
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+
+    const user = await Register.findOne({
+      email,
+      resetOtp: hashedOtp,
+      resetOtpExpiry: { $gt: Date.now() },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        message: "Invalid or expired OTP",
+      });
+    }
+
+    user.password = password;
+
+    // user.password = await bcrypt.hash(password, 10);
+
+    user.resetOtp = undefined;
+    user.resetOtpExpiry = undefined;
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Password reset successful",
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
 
 exports.verifyOtp = async (req, res) => {
   try {
@@ -102,7 +151,7 @@ exports.verifyOtp = async (req, res) => {
       });
     }
 
-    // ⚠️ SAFE expiry check
+    //  SAFE expiry check
     if (!user.otpExpiry || Number(user.otpExpiry) < Date.now()) {
       return res.status(200).json({
         success: false,
@@ -110,7 +159,7 @@ exports.verifyOtp = async (req, res) => {
       });
     }
 
-    // ⚠️ SAFE OTP check
+    // SAFE OTP check
     if (!user.otp || user.otp.toString().trim() !== otp) {
       console.log("DB OTP:", user.otp, "REQ OTP:", otp);
       return res.status(200).json({
@@ -129,7 +178,6 @@ exports.verifyOtp = async (req, res) => {
       success: true,
       message: "OTP verified successfully",
     });
-
   } catch (err) {
     console.error("VERIFY OTP SERVER ERROR:", err);
     return res.status(500).json({
@@ -138,8 +186,6 @@ exports.verifyOtp = async (req, res) => {
     });
   }
 };
-
-
 
 exports.resendOtp = async (req, res) => {
   try {
@@ -289,7 +335,11 @@ exports.login = async (req, res) => {
       return res.status(400).json({ msg: "Invalid credentials" });
     }
 
+    console.log("Entered:", password);
+    console.log("Stored:", user.password);
+
     const isMatch = await bcrypt.compare(password, user.password);
+    console.log("Match:", isMatch);
 
     if (!isMatch) {
       return res.status(400).json({ msg: "Invalid credentials" });
