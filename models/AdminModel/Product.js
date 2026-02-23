@@ -13,7 +13,7 @@ const productSchema = new mongoose.Schema(
     gst: { type: Number, default: 0 },
     moq: { type: Number, default: 1 },
 
-    image: { type: String }, // image URL
+    image: { type: String }, 
     status: { type: String, default: "Active" },
   },
   { timestamps: true }

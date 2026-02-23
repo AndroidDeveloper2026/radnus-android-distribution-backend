@@ -15,11 +15,21 @@ router.get("/", async (req, res) => {
         result[item.state][item.district] = [];
 
       result[item.state][item.district].push({
+        _id: item._id, // ✅ IMPORTANT FIX
+        state: item.state,
+        district: item.district,
         taluk: item.taluk,
         beats: item.beats,
         assignedTo: item.assignedTo,
         active: item.active,
       });
+
+      // result[item.state][item.district].push({
+      //   taluk: item.taluk,
+      //   beats: item.beats,
+      //   assignedTo: item.assignedTo,
+      //   active: item.active,
+      // });
     });
 
     res.json(result);
@@ -52,7 +62,7 @@ router.post("/", async (req, res) => {
       district,
       taluk,
       beats: beats || [],
-      assignedTo: assignedTo || null,
+      assignedTo: assignedTo || "",
       active: true,
     });
 
@@ -67,6 +77,10 @@ router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
+    if (!id) {
+      return res.status(400).json({ msg: "ID is required" });
+    }
+
     const updated = await Territory.findByIdAndUpdate(
       id,
       {
@@ -74,7 +88,7 @@ router.put("/:id", async (req, res) => {
         district: req.body.district,
         taluk: req.body.taluk,
         beats: req.body.beats || [],
-        assignedTo: req.body.assignedTo || null,
+        assignedTo: req.body.assignedTo || "",
         active: req.body.active ?? true,
       },
       { new: true },
@@ -91,90 +105,42 @@ router.put("/:id", async (req, res) => {
 });
 
 // DELETE TALUK
-router.delete('/taluk/:id', async (req, res) => {
+router.delete("/taluk/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
     await Territory.findByIdAndDelete(id);
 
-    res.json({ msg: 'Taluk deleted' });
+    res.json({ msg: "Taluk deleted" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // DELETE DISTRICT
-router.delete('/district', async (req, res) => {
+router.delete("/district", async (req, res) => {
   try {
     const { state, district } = req.body;
 
     await Territory.deleteMany({ state, district });
 
-    res.json({ msg: 'District deleted' });
+    res.json({ msg: "District deleted" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // DELETE STATE
-router.delete('/state', async (req, res) => {
+router.delete("/state", async (req, res) => {
   try {
     const { state } = req.body;
 
     await Territory.deleteMany({ state });
 
-    res.json({ msg: 'State deleted' });
+    res.json({ msg: "State deleted" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-
-// // ✅ ADD DISTRICT
-// router.post('/district', async (req, res) => {
-//   const { state, district } = req.body;
-
-//   try {
-//     const exists = await Territory.findOne({ state, district });
-
-//     if (exists) {
-//       return res.status(400).json({ msg: 'District exists' });
-//     }
-
-//     await Territory.create({
-//       state,
-//       district,
-//       taluk: null,
-//       beats: [],
-//     });
-
-//     res.json({ msg: 'District added' });
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// });
-
-// // ✅ ADD TALUK
-// router.post('/taluk', async (req, res) => {
-//   const { state, district, taluk } = req.body;
-
-//   try {
-//     const exists = await Territory.findOne({ state, district, taluk });
-
-//     if (exists) {
-//       return res.status(400).json({ msg: 'Taluk exists' });
-//     }
-
-//     await Territory.create({
-//       state,
-//       district,
-//       taluk,
-//       beats: [],
-//     });
-
-//     res.json({ msg: 'Taluk added' });
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// });
 
 module.exports = router;

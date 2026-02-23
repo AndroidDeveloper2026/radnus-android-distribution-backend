@@ -89,11 +89,6 @@ const registerSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-// 🔐 Hash password before save
-// registerSchema.pre("save", async function (next) {
-//   if (!this.isModified("password")) return next();
-//   this.password = await bcrypt.hash(this.password, 10);
-// });
 
 registerSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
@@ -109,13 +104,5 @@ registerSchema.methods.generateOtp = function () {
   return otp;
 };
 
-// registerSchema.methods.generateOtp = function () {
-//   const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-//   this.otp = otp;
-//   this.otpExpiry = Date.now() + 5 * 60 * 1000; // 5 mins
-
-//   return otp;
-// };
 
 module.exports = mongoose.model("Register", registerSchema);

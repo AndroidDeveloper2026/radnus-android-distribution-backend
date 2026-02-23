@@ -2,13 +2,11 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const Register = require("../models/Register");
-// const User = require("../models/User");
 const admin = require("../config/firebaseAdmin");
 const transporter = require("../config/mailer");
 
 exports.forgotPassword = async (req, res) => {
   try {
-    // console.log("(forgotpassword) REQ BODY:", req.body);
     const { email } = req.body;
 
     if (!email) {
@@ -19,16 +17,23 @@ exports.forgotPassword = async (req, res) => {
 
     const user = await Register.findOne({ email });
 
+    // if (!user) {
+    //   return res.json({
+    //     success: true,
+    //     message: "If email exists, OTP sent",
+    //   });
+    // }
+
     if (!user) {
-      return res.json({
-        success: true,
-        message: "If email exists, OTP sent",
+      return res.status(404).json({
+        success: false,
+        message: "Email not registered",
       });
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // 🔐 hash OTP
+    // hash OTP
     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
     user.resetOtp = hashedOtp;
@@ -36,10 +41,7 @@ exports.forgotPassword = async (req, res) => {
 
     await user.save();
 
-    // 👉 TODO: send email (use nodemailer)
-    // console.log("RESET OTP:", otp);
-
-    // ✅ SEND EMAIL HERE
+    // SEND EMAIL HERE
 
     await transporter.sendMail({
       from: `"Radnus Distribution App" <${process.env.EMAIL_USER}>`,
@@ -111,8 +113,6 @@ exports.resetPassword = async (req, res) => {
     }
 
     user.password = password;
-
-    // user.password = await bcrypt.hash(password, 10);
 
     user.resetOtp = undefined;
     user.resetOtpExpiry = undefined;
@@ -189,16 +189,27 @@ exports.verifyOtp = async (req, res) => {
 
 exports.resendOtp = async (req, res) => {
   try {
-    const { mobile } = req.body;
+    const { mobile, email, type } = req.body;
 
-    if (!mobile) {
-      return res.status(400).json({
-        success: false,
-        message: "Mobile number is required",
-      });
+    let user;
+
+    // ✅ CASE 1: REGISTER (mobile)
+    if (type === "register") {
+      if (!mobile) {
+        return res.status(400).json({ message: "Mobile required" });
+      }
+
+      user = await Register.findOne({ mobile });
     }
 
-    const user = await Register.findOne({ mobile });
+    // ✅ CASE 2: RESET PASSWORD (email)
+    else if (type === "reset") {
+      if (!email) {
+        return res.status(400).json({ message: "Email required" });
+      }
+
+      user = await Register.findOne({ email });
+    }
 
     if (!user) {
       return res.status(404).json({
@@ -207,38 +218,101 @@ exports.resendOtp = async (req, res) => {
       });
     }
 
-    // 🔐 Generate NEW OTP
-    const otp = user.generateOtp();
+    // 🔐 Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+
+    user.resetOtp = hashedOtp;
+    user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
+
     await user.save();
 
-    // 🔔 Send FCM notification ONLY if token exists
-    if (user.fcmToken) {
-      try {
-        await admin.messaging().send({
-          token: user.fcmToken,
-          notification: {
-            title: "OTP Verification",
-            body: `Your OTP is ${otp}`,
-          },
-        });
-      } catch (fcmError) {
-        console.error("FCM ERROR (ignored):", fcmError.message);
-        // ❗ Do NOT fail OTP resend because of FCM
-      }
+    // 📧 Send Email for reset
+    if (type === "reset") {
+      await transporter.sendMail({
+        to: email,
+        subject: "Resend OTP",
+        html: `<h1>${otp}</h1>`,
+      });
     }
 
-    return res.status(200).json({
+    // 📱 Send FCM for register
+    if (type === "register" && user.fcmToken) {
+      await admin.messaging().send({
+        token: user.fcmToken,
+        notification: {
+          title: "OTP",
+          body: `Your OTP is ${otp}`,
+        },
+      });
+    }
+
+    res.json({
       success: true,
-      message: "OTP resent successfully",
+      message: "OTP resent",
     });
-  } catch (error) {
-    console.error("RESEND OTP ERROR:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Server error while resending OTP",
-    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
   }
 };
+
+// exports.resendOtp = async (req, res) => {
+//   try {
+//     const { mobile } = req.body;
+
+//     if (!mobile) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Mobile number is required",
+//       });
+//     }
+
+//     const user = await Register.findOne({ mobile });
+
+//     if (!user) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "User not found",
+//       });
+//     }
+
+//     // 🔐 Generate NEW OTP
+//     const otp = user.generateOtp();
+//     await user.save();
+
+//     // 🔔 Send FCM notification ONLY if token exists
+//     if (user.fcmToken) {
+//       try {
+//         await admin.messaging().send({
+//           token: user.fcmToken,
+//           notification: {
+//             title: "OTP Verification",
+//             body: `Your OTP is ${otp}`,
+//           },
+//         });
+//       } catch (fcmError) {
+//         console.error("FCM ERROR (ignored):", fcmError.message);
+//         // ❗ Do NOT fail OTP resend because of FCM
+//       }
+//     }
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "OTP resent successfully",
+//     });
+//   } catch (error) {
+//     console.error("RESEND OTP ERROR:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Server error while resending OTP",
+//     });
+//   }
+// };
+
+
 
 //register
 exports.register = async (req, res) => {
