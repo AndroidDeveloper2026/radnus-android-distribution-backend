@@ -20,6 +20,8 @@ app.use("/api/auth", require('./routes/adminAuth'));
 app.use("/api/products", require("./routes/productRoutes"));
 app.use('/api/territory', require('./routes/territoryRoutes'));
 
+app.use("/api/distributors",require("./routes/distributorRoutes"));
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
