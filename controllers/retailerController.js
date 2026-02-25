@@ -6,7 +6,7 @@ exports.createRetailer = async (req, res) => {
 
     const retailer = new Retailer({
       ...req.body,
-      shopPhoto: file?.filename,
+      shopPhoto: req.file?.filename,
     });
 
     await retailer.save();
