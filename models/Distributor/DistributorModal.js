@@ -10,7 +10,7 @@ const distributorSchema = new mongoose.Schema(
     msme: String,
     address: String,
     communicationAddress: String,
-    bankDetails: String,
+    // bankDetails: String,
     fseAadhaar: String,
 
     // Images (you already have multer)
