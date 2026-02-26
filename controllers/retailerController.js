@@ -2,26 +2,26 @@ const Retailer = require("../models/RetailerModel/Retailer");
 
 exports.createRetailer = async (req, res) => {
   try {
-    console.log("BODY:", req.body);
-    console.log("FILE:", req.file);
+    const data = req.body;
+    const file = req.file;
 
-    if (!req.file) {
-      return res.status(400).json({ message: "Image upload failed" });
+    let shopPhoto = null;
+
+    if (file) {
+      // ✅ Convert image to base64
+      shopPhoto = file.buffer.toString("base64");
     }
 
     const retailer = new Retailer({
-      shopName: req.body.shopName,
-      ownerName: req.body.ownerName,
-      mobile: req.body.mobile,
-      gps: req.body.gps,
-      shopPhoto: req.file.filename,
+      ...data,
+      shopPhoto, // ✅ store base64
     });
 
     await retailer.save();
 
     res.status(201).json(retailer);
   } catch (err) {
-    console.log("SERVER ERROR:", err);
+    console.log("ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };
