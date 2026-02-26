@@ -1,11 +1,52 @@
 const Distributor = require("../models/Distributor/DistributorModal");
 
 /* CREATE */
+// exports.createDistributor = async (req, res) => {
+//   try {
+//     const data = req.body;
+
+//     const distributor = new Distributor(data);
+//     await distributor.save();
+
+//     res.status(201).json(distributor);
+//   } catch (error) {
+//     res.status(500).json({ message: error.message });
+//   }
+// };
+
 exports.createDistributor = async (req, res) => {
   try {
     const data = req.body;
 
-    const distributor = new Distributor(data);
+    const files = req.files;
+
+    const images = {};
+
+    // Convert to base64
+    if (files) {
+      if (files.profile) {
+        images.profile =
+          files.profile[0].buffer.toString("base64");
+      }
+      if (files.shop) {
+        images.shop =
+          files.shop[0].buffer.toString("base64");
+      }
+      if (files.aadhaar) {
+        images.aadhaar =
+          files.aadhaar[0].buffer.toString("base64");
+      }
+      if (files.passport) {
+        images.passport =
+          files.passport[0].buffer.toString("base64");
+      }
+    }
+
+    const distributor = new Distributor({
+      ...data,
+      images,
+    });
+
     await distributor.save();
 
     res.status(201).json(distributor);
