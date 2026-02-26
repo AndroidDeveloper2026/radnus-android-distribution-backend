@@ -2,7 +2,8 @@ const Retailer = require("../models/RetailerModel/Retailer");
 
 exports.createRetailer = async (req, res) => {
   try {
-    const file = req.file;
+    console.log("BODY:", req.body);
+    console.log("FILE:", req.file);
 
     const retailer = new Retailer({
       ...req.body,
@@ -26,7 +27,7 @@ exports.updateStatus = async (req, res) => {
   const updated = await Retailer.findByIdAndUpdate(
     req.params.id,
     { status: req.body.status },
-    { new: true }
+    { new: true },
   );
   res.json(updated);
 };
