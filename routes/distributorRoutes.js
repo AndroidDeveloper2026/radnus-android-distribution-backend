@@ -34,7 +34,7 @@
 
 const express = require("express");
 const router = express.Router();
-const upload = require("../middleware/uploadMemory");
+const uploadMemory = require("../middleware/uploadMemory");
 
 const {
   createDistributor,
