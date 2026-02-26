@@ -28,6 +28,7 @@ app.use("/api/distributors",require("./routes/distributorRoutes"));
 app.use("/api/location", require("./routes/locationRoutes"));
 
 app.use("/api/retailers", require("./routes/retailerRoute"));
+app.use("/api/fse", require("./routes/fseRoutes"));
 
 // ✅ Create HTTP server
 const server = http.createServer(app);
