@@ -5,15 +5,23 @@ exports.createRetailer = async (req, res) => {
     console.log("BODY:", req.body);
     console.log("FILE:", req.file);
 
+    if (!req.file) {
+      return res.status(400).json({ message: "Image upload failed" });
+    }
+
     const retailer = new Retailer({
-      ...req.body,
-      shopPhoto: req.file?.filename,
+      shopName: req.body.shopName,
+      ownerName: req.body.ownerName,
+      mobile: req.body.mobile,
+      gps: req.body.gps,
+      shopPhoto: req.file.filename,
     });
 
     await retailer.save();
 
     res.status(201).json(retailer);
   } catch (err) {
+    console.log("SERVER ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };
