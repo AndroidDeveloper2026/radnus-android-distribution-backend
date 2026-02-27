@@ -6,6 +6,8 @@ const {
   createRetailer,
   getRetailers,
   updateStatus,
+  updateRetailer,
+  deleteRetailer
 } = require("../controllers/retailerController");
 
 router.post("/", upload.single("shopPhoto"), createRetailer);
