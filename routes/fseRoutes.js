@@ -1,5 +1,5 @@
 const router = require("express").Router();
-const uploadMemory = require("../middleware/uploadMemory");
+const upload = require("../middleware/uploadMemory");
 const FSE = require("../models/FSEModel/FSEDetails");
 
 // CREATE
@@ -12,7 +12,7 @@ const FSE = require("../models/FSEModel/FSEDetails");
 //   }
 // });
 
-router.post("/", uploadMemory.single("photo"), async (req, res) => {
+router.post("/", upload.single("photo"), async (req, res) => {
   try {
     console.log("BODY:", req.body);
     console.log("FILE:", req.file);
