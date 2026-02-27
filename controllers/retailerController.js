@@ -2,19 +2,18 @@ const Retailer = require("../models/RetailerModel/Retailer");
 
 exports.createRetailer = async (req, res) => {
   try {
-    const data = req.body;
+    // const data = req.body;
     const file = req.file;
 
     let shopPhoto = null;
 
     if (file) {
-      // ✅ Convert image to base64
       shopPhoto = file.buffer.toString("base64");
     }
 
     const retailer = new Retailer({
-      ...data,
-      shopPhoto, // ✅ store base64
+      ...req.body,
+      shopPhoto,
     });
 
     await retailer.save();
@@ -33,11 +32,9 @@ exports.getRetailers = async (req, res) => {
 
 exports.updateRetailer = async (req, res) => {
   try {
-    const updated = await Retailer.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true }
-    );
+    const updated = await Retailer.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+    });
 
     res.json(updated);
   } catch (err) {

@@ -8,26 +8,29 @@ const {
   getRetailers,
   updateStatus,
   updateRetailer,
-  deleteRetailer
+  deleteRetailer,
 } = require("../controllers/retailerController");
 
-router.post('/', upload.single('shopPhoto'), async (req, res) => {
-  try {
-    const retailer = new Retailer({
-      ...req.body,
-      shopPhoto: req.file.path,
-    });
+// router.post('/retailer', upload.single('shopPhoto'), async (req, res) => {
+//     console.log("BODY:", req.body);
+//   console.log("FILE:", req.file);
+//   try {
+//     const retailer = new Retailer({
+//       ...req.body,
+//       shopPhoto: req.file ? req.file.path : null,
+//     });
 
-    await retailer.save();
-    res.json(retailer);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+//     await retailer.save();
+//     res.json(retailer);
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+router.post("/retailers", upload.single("shopPhoto"), createRetailer);
 // router.post("/", upload.single("shopPhoto"), createRetailer);
 router.get("/", getRetailers);
 router.patch("/:id/status", updateStatus);
-router.put("/:id", updateRetailer);     // EDIT
+router.put("/:id", updateRetailer); // EDIT
 router.delete("/:id", deleteRetailer); // DELETE
 
 module.exports = router;
