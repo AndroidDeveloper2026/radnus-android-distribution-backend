@@ -27,25 +27,37 @@ const Retailer = require("../models/RetailerModel/Retailer");
 
 exports.createRetailer = async (req, res) => {
   try {
-    let shopPhoto = null;
+    console.log("BODY:", req.body);
+    console.log("FILE:", req.file);
 
-    if (req.file) {
-      shopPhoto = `/uploads/${req.file.filename}`; // ✅ store path
-    }
-
-    const retailer = new Retailer({
-      ...req.body,
-      shopPhoto,
-    });
-
-    await retailer.save();
-
-    res.status(201).json(retailer);
+    return res.json({ body: req.body, file: req.file }); // TEMP RESPONSE
   } catch (err) {
     console.log("ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };
+
+// exports.createRetailer = async (req, res) => {
+//   try {
+//     let shopPhoto = null;
+
+//     if (req.file) {
+//       shopPhoto = `/uploads/${req.file.filename}`; // ✅ store path
+//     }
+
+//     const retailer = new Retailer({
+//       ...req.body,
+//       shopPhoto,
+//     });
+
+//     await retailer.save();
+
+//     res.status(201).json(retailer);
+//   } catch (err) {
+//     console.log("ERROR:", err);
+//     res.status(500).json({ message: err.message });
+//   }
+// };
 
 exports.getRetailers = async (req, res) => {
   const data = await Retailer.find().sort({ createdAt: -1 });
