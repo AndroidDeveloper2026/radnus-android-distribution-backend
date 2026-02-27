@@ -1,27 +1,62 @@
 const Retailer = require("../models/RetailerModel/Retailer");
 
+// exports.createRetailer = async (req, res) => {
+//   try {
+//     const data = req.body;
+//     const file = req.file;
+
+//     let shopPhoto = null;
+
+//     if (file) {
+//       shopPhoto = file.buffer.toString("base64");
+//     }
+
+//     const retailer = new Retailer({
+//       ...req.body,
+//       shopPhoto,
+//     });
+
+//     await retailer.save();
+
+//     res.status(201).json(retailer);
+//   } catch (err) {
+//     console.log("ERROR:", err);
+//     res.status(500).json({ message: err.message });
+//   }
+// };
+
 exports.createRetailer = async (req, res) => {
   try {
-    // const data = req.body;
-    const file = req.file;
+    console.log("BODY:", req.body);
+    console.log("FILE:", req.file);
 
     let shopPhoto = null;
 
-    if (file) {
-      shopPhoto = file.buffer.toString("base64");
+    if (req.file) {
+      // ✅ Convert buffer → base64
+      shopPhoto = req.file.buffer.toString("base64");
     }
 
     const retailer = new Retailer({
-      ...req.body,
+      shopName: req.body.shopName,
+      ownerName: req.body.ownerName,
+      mobile: req.body.mobile,
+      gps: req.body.gps,
       shopPhoto,
     });
 
     await retailer.save();
 
-    res.status(201).json(retailer);
+    res.status(201).json({
+      success: true,
+      data: retailer,
+    });
   } catch (err) {
-    console.log("ERROR:", err);
-    res.status(500).json({ message: err.message });
+    console.log("❌ ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
 
