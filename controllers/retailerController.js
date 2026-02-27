@@ -7,9 +7,9 @@ exports.createRetailer = async (req, res) => {
 
     let shopPhoto = null;
 
-    if (file) {
-      shopPhoto = file.buffer.toString("base64");
-    }
+    // if (file) {
+    //   shopPhoto = file.buffer.toString("base64");
+    // }
 
     const retailer = new Retailer({
       ...req.body,
