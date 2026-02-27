@@ -2,12 +2,33 @@ const router = require("express").Router();
 const FSE = require("../models/FSEModel/FSEDetails");
 
 // CREATE
-router.post("/", async (req, res) => {
+// router.post("/", async (req, res) => {
+//   try {
+//     const fse = await FSE.create(req.body);
+//     res.json(fse);
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
+router.post("/", upload.single("photo"), async (req, res) => {
   try {
-    const fse = await FSE.create(req.body);
+    console.log("BODY:", req.body);
+    console.log("FILE:", req.file);
+
+    const photoPath = req.file ? `/uploads/${req.file.filename}` : null;
+
+    const fse = new FSE({
+      ...req.body,
+      photo: photoPath,
+    });
+
+    await fse.save();
+
     res.json(fse);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ message: "Error creating FSE" });
   }
 });
 

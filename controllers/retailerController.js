@@ -31,6 +31,29 @@ exports.getRetailers = async (req, res) => {
   res.json(data);
 };
 
+exports.updateRetailer = async (req, res) => {
+  try {
+    const updated = await Retailer.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true }
+    );
+
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.deleteRetailer = async (req, res) => {
+  try {
+    await Retailer.findByIdAndDelete(req.params.id);
+    res.json({ message: "Deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 exports.updateStatus = async (req, res) => {
   const updated = await Retailer.findByIdAndUpdate(
     req.params.id,

@@ -11,5 +11,7 @@ const {
 router.post("/", upload.single("shopPhoto"), createRetailer);
 router.get("/", getRetailers);
 router.patch("/:id/status", updateStatus);
+router.put("/:id", updateRetailer);     // EDIT
+router.delete("/:id", deleteRetailer); // DELETE
 
 module.exports = router;
