@@ -11,7 +11,7 @@ const {
 } = require("../controllers/retailerController");
 
 // ✅ CLEAN
-router.post("/", upload.single("shopPhoto"), createRetailer);
+router.post("/retailers", upload.single("shopPhoto"), createRetailer);
 
 router.get("/", getRetailers);
 router.patch("/:id/status", updateStatus);
