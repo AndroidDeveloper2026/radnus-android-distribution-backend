@@ -3,15 +3,22 @@ const Session = require("../models/FSEModel/Session");
 
 // ▶️ START DAY
 router.post("/start", async (req, res) => {
-  const { userId, latitude, longitude } = req.body;
+ try {
+   const { userId, latitude, longitude } = req.body;
 
-  const session = await Session.create({
-    userId,
-    startLocation: { latitude, longitude },
-  });
+   const session = await Session.create({
+     userId,
+     startLocation: { latitude, longitude },
+   });
 
-  res.json(session);
+   res.json(session);
+
+
+ } catch (err) {
+   res.status(500).json({ message: err.message });
+ }
 });
+
 
 // ⏹️ END DAY
 router.post("/end", async (req, res) => {
