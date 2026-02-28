@@ -34,7 +34,7 @@ app.use("/api/location", require("./routes/locationRoutes"));
 
 app.use("/api/retailers", require("./routes/retailerRoute"));
 app.use("/api/fse", require("./routes/fseRoutes"));
-
+app.use("/api/session", require("./routes/sessionRoutes"));
 // ✅ Create HTTP server
 const server = http.createServer(app);
 
