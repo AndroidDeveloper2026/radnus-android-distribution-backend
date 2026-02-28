@@ -4,12 +4,17 @@ const connectDB = require("./config/db");
 const http = require("http");
 const { Server } = require("socket.io");
 const Location = require("./models/LocationModel/Location");
+
 const dns = require("dns");
 dns.setServers(["1.1.1.1", "8.8.8.8"]);
 dotenv.config({
     path:`.env.${process.env.NODE_ENV||'dev'}`
 });
 connectDB();
+
+const startAutoEndJob = require("./cron/autoEndDay");
+startAutoEndJob();
+
 
 const app = express();
 app.use(express.json());
@@ -39,32 +44,25 @@ const io = new Server(server, {
 });
 
 // 🔥 Store users (temporary or DB)
-let users = {};
+// let users = {};
 
-// ✅ Socket logic
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
 
   socket.on("send-location", async (data) => {
-    const { userId, latitude, longitude } = data;
+    const { userId, sessionId, latitude, longitude } = data;
 
-    // Save in memory
-    users[userId] = { latitude, longitude };
+    // Save every point (ROUTE HISTORY)
+    await Location.create({
+      userId,
+      sessionId,
+      latitude,
+      longitude,
+    });
 
-    // 🔥 OPTIONAL: Save to DB
-    // await LocationModel.findOneAndUpdate(
-    //   { userId },
-    //   { latitude, longitude, updatedAt: new Date() },
-    //   { upsert: true }
-    // );
-
-    // Broadcast all users
-    io.emit("users-location", users);
+    // Broadcast
+    io.emit("users-location", { userId, latitude, longitude });
   });
 
-  socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-  });
 });
 
 const PORT = process.env.PORT || 5000;

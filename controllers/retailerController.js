@@ -30,7 +30,7 @@ exports.createRetailer = async (req, res) => {
     console.log("BODY:", req.body);
     console.log("FILE:", req.file);
 
-    return res.json({ body: req.body, file: req.file }); // TEMP RESPONSE
+    return res.json({ body: req?.body, file: req?.file }); // TEMP RESPONSE
   } catch (err) {
     console.log("ERROR:", err);
     res.status(500).json({ message: err.message });
