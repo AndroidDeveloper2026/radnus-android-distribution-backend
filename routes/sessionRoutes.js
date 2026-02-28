@@ -20,20 +20,40 @@ router.post("/start", async (req, res) => {
 });
 
 
-// ⏹️ END DAY
 router.post("/end", async (req, res) => {
-  const { sessionId } = req.body;
+  try {
+    const { sessionId } = req.body;
 
-  const session = await Session.findByIdAndUpdate(
-    sessionId,
-    {
-      endTime: new Date(),
-      status: "ENDED",
-    },
-    { new: true }
-  );
+    const session = await Session.findByIdAndUpdate(
+      sessionId,
+      {
+        endTime: new Date(),
+        status: "ENDED",
+      },
+      { new: true }
+    );
 
-  res.json(session);
+    res.json(session);
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 });
+
+// ⏹️ END DAY
+// router.post("/end", async (req, res) => {
+//   const { sessionId } = req.body;
+
+//   const session = await Session.findByIdAndUpdate(
+//     sessionId,
+//     {
+//       endTime: new Date(),
+//       status: "ENDED",
+//     },
+//     { new: true }
+//   );
+
+//   res.json(session);
+// });
 
 module.exports = router;
