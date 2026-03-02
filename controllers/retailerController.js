@@ -61,7 +61,7 @@ const Retailer = require("../models/RetailerModel/Retailer");
 
 const cloudinary = require("../config/cloudinary");
 const streamifier = require("streamifier");
-const Retailer = require("../models/Retailer");
+
 
 exports.createRetailer = async (req, res) => {
   try {
