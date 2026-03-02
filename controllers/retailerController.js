@@ -25,17 +25,17 @@ const Retailer = require("../models/RetailerModel/Retailer");
 //   }
 // };
 
-exports.createRetailer = async (req, res) => {
-  try {
-    console.log("BODY:", req.body);
-    console.log("FILE:", req.file);
+// exports.createRetailer = async (req, res) => {
+//   try {
+//     console.log("BODY:", req.body);
+//     console.log("FILE:", req.file);
 
-    return res.json({ body: req?.body, file: req?.file }); // TEMP RESPONSE
-  } catch (err) {
-    console.log("ERROR:", err);
-    res.status(500).json({ message: err.message });
-  }
-};
+//     return res.json({ body: req?.body, file: req?.file }); // TEMP RESPONSE
+//   } catch (err) {
+//     console.log("ERROR:", err);
+//     res.status(500).json({ message: err.message });
+//   }
+// };
 
 // exports.createRetailer = async (req, res) => {
 //   try {
@@ -58,6 +58,50 @@ exports.createRetailer = async (req, res) => {
 //     res.status(500).json({ message: err.message });
 //   }
 // };
+
+const cloudinary = require("../config/cloudinary");
+const streamifier = require("streamifier");
+const Retailer = require("../models/Retailer");
+
+exports.createRetailer = async (req, res) => {
+  try {
+    let imageUrl = "";
+
+    if (req.file) {
+      const streamUpload = () => {
+        return new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: "retailers" },
+            (error, result) => {
+              if (result) resolve(result);
+              else reject(error);
+            }
+          );
+
+          streamifier
+            .createReadStream(req.file.buffer)
+            .pipe(stream);
+        });
+      };
+
+      const result = await streamUpload();
+      imageUrl = result.secure_url;
+    }
+
+    const retailer = await Retailer.create({
+      shopName: req.body.shopName,
+      ownerName: req.body.ownerName,
+      mobile: req.body.mobile,
+      gps: req.body.gps,
+      shopPhoto: imageUrl, // ✅ store cloudinary URL
+    });
+
+    res.json(retailer);
+  } catch (err) {
+    console.log("ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
 
 exports.getRetailers = async (req, res) => {
   const data = await Retailer.find().sort({ createdAt: -1 });
