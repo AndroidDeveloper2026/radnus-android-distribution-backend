@@ -1,20 +1,42 @@
 const Product = require("../models/AdminModel/Product");
 const XLSX = require("xlsx");
+const uploadToCloudinary = require("../utils/cloudinaryUpload");
 
 /* CREATE PRODUCT */
+// exports.createProduct = async (req, res) => {
+//   try {
+//     // console.log("--- BODY DB ---:", req.body);
+//     // console.log("--- FILE DB ---:", req.file);
+//     const image = req.file ? req.file.path : null;
+
+//     const product = await Product.create({
+//       ...req.body,
+//       image,
+//     });
+
+//     res.status(201).json(product);
+//   } catch (err) {
+//     res.status(400).json({ message: err.message });
+//   }
+// };
+
 exports.createProduct = async (req, res) => {
   try {
-    // console.log("--- BODY DB ---:", req.body);
-    // console.log("--- FILE DB ---:", req.file);
-    const image = req.file ? req.file.path : null;
+    let imageUrl = null;
+
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer);
+      imageUrl = result.secure_url; 
+    }
 
     const product = await Product.create({
       ...req.body,
-      image,
+      image: imageUrl,
     });
 
     res.status(201).json(product);
   } catch (err) {
+    console.error(err);
     res.status(400).json({ message: err.message });
   }
 };
