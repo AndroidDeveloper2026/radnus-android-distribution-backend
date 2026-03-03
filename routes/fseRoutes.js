@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const upload = require("../middleware/uploadMemory");
+const uploadToCloudinary = require("../utils/cloudinaryUpload");
 const FSE = require("../models/FSEModel/FSEDetails");
 
 // CREATE
@@ -12,16 +13,20 @@ const FSE = require("../models/FSEModel/FSEDetails");
 //   }
 // });
 
+
+
 router.post("/", upload.single("photo"), async (req, res) => {
   try {
-    console.log("BODY:", req.body);
-    console.log("FILE:", req.file);
+    let photoUrl = null;
 
-    const photoPath = req.file ? `/uploads/${req.file.filename}` : null;
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, "fse");
+      photoUrl = result.secure_url; // ✅ Cloudinary URL
+    }
 
     const fse = new FSE({
       ...req.body,
-      photo: photoPath,
+      photo: photoUrl,
     });
 
     await fse.save();
