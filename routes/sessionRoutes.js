@@ -65,49 +65,53 @@ const Session = require("../models/FSEModel/Session");
 
 // ✅ START DAY
 router.post("/start", async (req, res) => {
-  const { userId, latitude, longitude } = req.body;
+ const { userId, latitude, longitude } = req.body;
 
-  const session = await Session.create({
-    userId,
-    startLocation: { latitude, longitude },
-  });
+ const session = await Session.create({
+   userId,
+   startLocation: { latitude, longitude },
+ });
 
-  res.send(session);
+ res.send(session);
 });
+
 
 
 // ✅ SAVE LOCATION (IMPORTANT)
 router.post("/location/update", async (req, res) => {
-  const { sessionId, latitude, longitude } = req.body;
+ const { sessionId, latitude, longitude } = req.body;
 
-  await Session.findByIdAndUpdate(sessionId, {
-    $push: {
-      route: { latitude, longitude },
-    },
-  });
+ await Session.findByIdAndUpdate(sessionId, {
+   $push: {
+     route: { latitude, longitude },
+   },
+ });
 
-  res.send({ success: true });
+ res.send({ success: true });
 });
+
 
 
 // ✅ END DAY
 router.post("/end", async (req, res) => {
-  const { sessionId } = req.body;
+ const { sessionId } = req.body;
 
-  await Session.findByIdAndUpdate(sessionId, {
-    status: "ENDED",
-    endTime: new Date(),
-  });
+ await Session.findByIdAndUpdate(sessionId, {
+   status: "ENDED",
+   endTime: new Date(),
+ });
 
-  res.send({ success: true });
+ res.send({ success: true });
 });
+
 
 
 // ✅ GET SESSION (MAP HISTORY)
 router.get("/:id", async (req, res) => {
-  const session = await Session.findById(req.params.id);
-  res.send(session);
+ const session = await Session.findById(req.params.id);
+ res.send(session);
 });
+
 
 
 setInterval(async () => {
