@@ -1,56 +1,35 @@
 const Distributor = require("../models/Distributor/DistributorModal");
 
-/* CREATE */
-// exports.createDistributor = async (req, res) => {
-//   try {
-//     const data = req.body;
-
-//     const distributor = new Distributor(data);
-//     await distributor.save();
-
-//     res.status(201).json(distributor);
-//   } catch (error) {
-//     res.status(500).json({ message: error.message });
-//   }
-// };
+const uploadToCloudinary = require("../utils/cloudinaryUpload");
 
 exports.createDistributor = async (req, res) => {
   try {
     const data = req.body;
 
-    const files = req.files;
+    let profileUrl = null;
 
-    const images = {};
-
-    // Convert to base64
-    if (files) {
-      if (files.profile) {
-        images.profile =
-          files.profile[0].buffer.toString("base64");
-      }
-      if (files.shop) {
-        images.shop =
-          files.shop[0].buffer.toString("base64");
-      }
-      if (files.aadhaar) {
-        images.aadhaar =
-          files.aadhaar[0].buffer.toString("base64");
-      }
-      if (files.passport) {
-        images.passport =
-          files.passport[0].buffer.toString("base64");
-      }
+    // 📸 Upload to Cloudinary
+    if (req.file) {
+      const result = await uploadToCloudinary(
+        req.file.buffer,
+        "distributors"
+      );
+      profileUrl = result.secure_url;
     }
 
     const distributor = new Distributor({
       ...data,
-      images,
+      images: {
+        profile: profileUrl, // ✅ store URL
+      },
     });
 
     await distributor.save();
 
     res.status(201).json(distributor);
+
   } catch (error) {
+    console.error("CREATE DISTRIBUTOR ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };

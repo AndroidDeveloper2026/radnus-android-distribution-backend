@@ -259,60 +259,6 @@ exports.resendOtp = async (req, res) => {
   }
 };
 
-// exports.resendOtp = async (req, res) => {
-//   try {
-//     const { mobile } = req.body;
-
-//     if (!mobile) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Mobile number is required",
-//       });
-//     }
-
-//     const user = await Register.findOne({ mobile });
-
-//     if (!user) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "User not found",
-//       });
-//     }
-
-//     // 🔐 Generate NEW OTP
-//     const otp = user.generateOtp();
-//     await user.save();
-
-//     // 🔔 Send FCM notification ONLY if token exists
-//     if (user.fcmToken) {
-//       try {
-//         await admin.messaging().send({
-//           token: user.fcmToken,
-//           notification: {
-//             title: "OTP Verification",
-//             body: `Your OTP is ${otp}`,
-//           },
-//         });
-//       } catch (fcmError) {
-//         console.error("FCM ERROR (ignored):", fcmError.message);
-//         // ❗ Do NOT fail OTP resend because of FCM
-//       }
-//     }
-
-//     return res.status(200).json({
-//       success: true,
-//       message: "OTP resent successfully",
-//     });
-//   } catch (error) {
-//     console.error("RESEND OTP ERROR:", error);
-//     return res.status(500).json({
-//       success: false,
-//       message: "Server error while resending OTP",
-//     });
-//   }
-// };
-
-
 
 //register
 exports.register = async (req, res) => {

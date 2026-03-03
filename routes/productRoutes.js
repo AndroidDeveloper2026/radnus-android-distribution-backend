@@ -1,10 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const upload = require("../middleware/uploadMemory");
-// const upload = require("../middleware/uploadMiddleware");
 const controller = require("../controllers/productController");
 
-// router.post("/", upload.single("image"), controller.createProduct);
+
 router.post(
   "/add",
   upload.single("image"), // 🔥 IMPORTANT (same name as frontend)
