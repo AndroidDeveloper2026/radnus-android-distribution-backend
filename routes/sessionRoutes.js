@@ -222,14 +222,14 @@ router.get("/:id", async (req, res) => {
 
 
 
-setInterval(async () => {
-  const sessions = await Session.find({ status: "ACTIVE" });
+// setInterval(async () => {
+//   const sessions = await Session.find({ status: "ACTIVE" });
 
-  for (let s of sessions) {
-    s.status = "AUTO_ENDED";
-    s.endTime = new Date();
-    await s.save();
-  }
-}, 60000); // check every 1 min
+//   for (let s of sessions) {
+//     s.status = "AUTO_ENDED";
+//     s.endTime = new Date();
+//     await s.save();
+//   }
+// }, 60000); // check every 1 min
 
 module.exports = router;
