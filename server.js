@@ -48,29 +48,50 @@ const io = new Server(server, {
 // 🔥 Store users (temporary or DB)
 // let users = {};
 
-io.on("connection", (socket) => {
-  console.log("Connected:", socket.id);
+// io.on("connection", (socket) => {
+//   console.log("Connected:", socket.id);
 
-  socket.on("send-location", async (data) => {
+//   socket.on("send-location", async (data) => {
+//     const { userId, sessionId, latitude, longitude } = data;
+
+//     if (!userId || !latitude || !longitude) {
+//       return res.status(400).json({ message: "Missing fields" });
+//     }
+    
+//     await Location.create({
+//       userId,
+//       sessionId,
+//       latitude,
+//       longitude,
+//     });
+
+//     io.emit("users-location", { userId, latitude, longitude });
+//   });
+
+//   socket.on("disconnect", () => {
+//     console.log("Disconnected:", socket.id);
+//   });
+// });
+
+io.on("connection", socket => {
+
+  console.log("Connected", socket.id);
+
+  socket.on("send-location", async data => {
+
     const { userId, sessionId, latitude, longitude } = data;
 
-    if (!userId || !latitude || !longitude) {
-      return res.status(400).json({ message: "Missing fields" });
-    }
-    
     await Location.create({
       userId,
       sessionId,
       latitude,
-      longitude,
+      longitude
     });
 
-    io.emit("users-location", { userId, latitude, longitude });
+    io.emit("users-location", data);
+
   });
 
-  socket.on("disconnect", () => {
-    console.log("Disconnected:", socket.id);
-  });
 });
 
 const PORT = process.env.PORT || 5000;
