@@ -8,16 +8,39 @@ const Location = require("../models/LocationModel/Location");
 //   res.json(locations);
 // });
 
-router.get("/route/:sessionId", async (req, res) => {
-  try {
-    const data = await Location.find({
-      sessionId: req.params.sessionId,
-    }).sort({ timestamp: 1 });
+router.post("/update", async (req, res) => {
+ const { sessionId, latitude, longitude } = req.body;
 
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+ const location = new Location({
+   sessionId,
+   latitude,
+   longitude,
+ });
+
+ await location.save();
+
+ res.json({ success: true });
 });
+
+router.get("/route/:sessionId", async (req, res) => {
+ const data = await Location.find({
+   sessionId: req.params.sessionId,
+ }).sort({ timestamp: 1 });
+
+ res.json(data);
+});
+
+
+// router.get("/route/:sessionId", async (req, res) => {
+//   try {
+//     const data = await Location.find({
+//       sessionId: req.params.sessionId,
+//     }).sort({ timestamp: 1 });
+
+//     res.json(data);
+//   } catch (err) {
+//     res.status(500).json({ message: err.message });
+//   }
+// });
 
 module.exports = router;
