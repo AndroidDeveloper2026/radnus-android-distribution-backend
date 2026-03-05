@@ -187,74 +187,238 @@ exports.verifyOtp = async (req, res) => {
   }
 };
 
+// exports.resendOtp = async (req, res) => {
+//   try {
+//     const { mobile, email, type } = req.body;
+
+//     let user;
+
+//     // ✅ CASE 1: REGISTER (mobile)
+//     if (type === "register") {
+//       if (!mobile) {
+//         return res.status(400).json({ message: "Mobile required" });
+//       }
+
+//       user = await Register.findOne({ mobile });
+//     }
+
+//     // ✅ CASE 2: RESET PASSWORD (email)
+//     else if (type === "reset") {
+//       if (!email) {
+//         return res.status(400).json({ message: "Email required" });
+//       }
+
+//       user = await Register.findOne({ email });
+//     }
+
+//     if (!user) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "User not found",
+//       });
+//     }
+
+//     // 🔐 Generate OTP
+//     const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+//     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+
+//     user.resetOtp = hashedOtp;
+//     user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
+
+//     await user.save();
+
+//     // 📧 Send Email for reset
+//     if (type === "reset") {
+//       await transporter.sendMail({
+//         to: email,
+//         subject: "Resend OTP",
+//         html: `<h1>${otp}</h1>`,
+//       });
+//     }
+
+//     // 📱 Send FCM for register
+//     if (type === "register" && user.fcmToken) {
+//       await admin.messaging().send({
+//         token: user.fcmToken,
+//         notification: {
+//           title: "OTP",
+//           body: `Your OTP is ${otp}`,
+//         },
+//       });
+//     }
+
+//     res.json({
+//       success: true,
+//       message: "OTP resent",
+//     });
+
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: err.message });
+//   }
+// };
+
+// exports.resendOtp = async (req, res) => {
+//   try {
+//     const { mobile, email, type } = req.body;
+
+//     let user;
+
+//     if (type === "register") {
+//       if (!mobile) {
+//         return res.status(400).json({ message: "Mobile required" });
+//       }
+
+//       user = await Register.findOne({ mobile });
+//     } else if (type === "reset") {
+//       if (!email) {
+//         return res.status(400).json({ message: "Email required" });
+//       }
+
+//       user = await Register.findOne({ email });
+//     }
+
+//     if (!user) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "User not found",
+//       });
+//     }
+
+//     const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+//     // ✅ REGISTER FLOW
+//     if (type === "register") {
+//       user.otp = otp;
+//       user.otpExpiry = Date.now() + 10 * 60 * 1000;
+
+//       await user.save();
+
+//       if (user.fcmToken) {
+//         await admin.messaging().send({
+//           token: user.fcmToken,
+//           notification: {
+//             title: "OTP Verification",
+//             body: `Your OTP is ${otp}`,
+//           },
+//         });
+//       }
+//     }
+
+//     // ✅ RESET PASSWORD FLOW
+//     if (type === "reset") {
+//       const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+
+//       user.resetOtp = hashedOtp;
+//       user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
+
+//       await user.save();
+
+//       await transporter.sendMail({
+//         to: email,
+//         subject: "Password Reset OTP",
+//         html: `<h1>${otp}</h1>`,
+//       });
+//     }
+
+//     res.json({
+//       success: true,
+//       message: "OTP resent successfully",
+//     });
+//   } catch (err) {
+//     console.error("RESEND OTP ERROR:", err);
+//     res.status(500).json({ message: err.message });
+//   }
+// };
+
 exports.resendOtp = async (req, res) => {
   try {
     const { mobile, email, type } = req.body;
 
     let user;
 
-    // ✅ CASE 1: REGISTER (mobile)
+    // REGISTER FLOW
     if (type === "register") {
+
       if (!mobile) {
         return res.status(400).json({ message: "Mobile required" });
       }
 
       user = await Register.findOne({ mobile });
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+      user.otp = otp;
+      user.otpExpiry = new Date(Date.now() + 5 * 60 * 1000);
+
+      await user.save();
+
+      if (user.fcmToken) {
+        await admin.messaging().send({
+          token: user.fcmToken,
+          notification: {
+            title: "OTP Verification",
+            body: `Your OTP is ${otp}`,
+          },
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "OTP resent successfully",
+      });
     }
 
-    // ✅ CASE 2: RESET PASSWORD (email)
-    else if (type === "reset") {
+    // RESET PASSWORD FLOW
+    if (type === "reset") {
+
       if (!email) {
         return res.status(400).json({ message: "Email required" });
       }
 
       user = await Register.findOne({ email });
-    }
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
 
-    // 🔐 Generate OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+      const hashedOtp = crypto
+        .createHash("sha256")
+        .update(otp)
+        .digest("hex");
 
-    user.resetOtp = hashedOtp;
-    user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
+      user.resetOtp = hashedOtp;
+      user.resetOtpExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
-    await user.save();
+      await user.save();
 
-    // 📧 Send Email for reset
-    if (type === "reset") {
       await transporter.sendMail({
         to: email,
-        subject: "Resend OTP",
-        html: `<h1>${otp}</h1>`,
+        subject: "Password Reset OTP",
+        html: `<h2>Your OTP is</h2><h1>${otp}</h1>`,
+      });
+
+      return res.json({
+        success: true,
+        message: "OTP resent successfully",
       });
     }
-
-    // 📱 Send FCM for register
-    if (type === "register" && user.fcmToken) {
-      await admin.messaging().send({
-        token: user.fcmToken,
-        notification: {
-          title: "OTP",
-          body: `Your OTP is ${otp}`,
-        },
-      });
-    }
-
-    res.json({
-      success: true,
-      message: "OTP resent",
-    });
 
   } catch (err) {
-    console.error(err);
+    console.error("RESEND OTP ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };
