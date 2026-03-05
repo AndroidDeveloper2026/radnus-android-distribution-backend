@@ -340,7 +340,6 @@ exports.resendOtp = async (req, res) => {
 
     // REGISTER FLOW
     if (type === "register") {
-
       if (!mobile) {
         return res.status(400).json({ message: "Mobile required" });
       }
@@ -364,11 +363,19 @@ exports.resendOtp = async (req, res) => {
       if (user.fcmToken) {
         await admin.messaging().send({
           token: user.fcmToken,
-          notification: {
+          data: {
             title: "OTP Verification",
             body: `Your OTP is ${otp}`,
+            otp: otp,
           },
         });
+        // await admin.messaging().send({
+        //   token: user.fcmToken,
+        //   notification: {
+        //     title: "OTP Verification",
+        //     body: `Your OTP is ${otp}`,
+        //   },
+        // });
       }
 
       return res.json({
@@ -379,7 +386,6 @@ exports.resendOtp = async (req, res) => {
 
     // RESET PASSWORD FLOW
     if (type === "reset") {
-
       if (!email) {
         return res.status(400).json({ message: "Email required" });
       }
@@ -395,10 +401,7 @@ exports.resendOtp = async (req, res) => {
 
       const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-      const hashedOtp = crypto
-        .createHash("sha256")
-        .update(otp)
-        .digest("hex");
+      const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
       user.resetOtp = hashedOtp;
       user.resetOtpExpiry = new Date(Date.now() + 10 * 60 * 1000);
@@ -416,13 +419,11 @@ exports.resendOtp = async (req, res) => {
         message: "OTP resent successfully",
       });
     }
-
   } catch (err) {
     console.error("RESEND OTP ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };
-
 
 //register
 exports.register = async (req, res) => {
