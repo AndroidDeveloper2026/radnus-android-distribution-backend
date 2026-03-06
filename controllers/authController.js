@@ -33,19 +33,24 @@ exports.forgotPassword = async (req, res) => {
 
     await user.save();
 
-    console.log("Sending OTP email to:", email);
+    // SEND RESPONSE FIRST
+    res.json({
+      success: true,
+      message: "OTP sent to email",
+    });
 
+    // SEND EMAIL AFTER RESPONSE
     try {
       await transporter.sendMail({
         from: `"Radnus Distribution App" <${process.env.EMAIL_USER}>`,
         to: email,
         subject: "Password Reset OTP",
         html: `
-      <h2>Password Reset</h2>
-      <p>Your OTP is:</p>
-      <h1 style="letter-spacing:5px">${otp}</h1>
-      <p>This OTP expires in 10 minutes.</p>
-    `,
+          <h2>Password Reset</h2>
+          <p>Your OTP is:</p>
+          <h1 style="letter-spacing:5px">${otp}</h1>
+          <p>This OTP expires in 10 minutes.</p>
+        `,
       });
 
       console.log("Email sent successfully");
@@ -53,10 +58,6 @@ exports.forgotPassword = async (req, res) => {
       console.error("EMAIL SEND ERROR:", mailErr);
     }
 
-    res.json({
-      success: true,
-      message: "OTP sent to email",
-    });
   } catch (err) {
     console.error("FORGOT PASSWORD ERROR:", err);
     res.status(500).json({
