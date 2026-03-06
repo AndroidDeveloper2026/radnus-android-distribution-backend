@@ -45,7 +45,7 @@ const io = new Server(server, {
   cors: { origin: "*" },
 });
 
-// io.on("connection", socket => {
+io.on("connection", socket => {
 
 //   console.log("Connected", socket.id);
 
@@ -64,10 +64,9 @@ const io = new Server(server, {
 
 //   });
 
-// });
 
-const calculateDistance = require("./utils/calculateDistance");
-const Session = require("./models/SessionModel");
+const calculateDistance = require("./utils/distance");
+const Session = require("./models/FSEModel/Session");
 
 let lastLocation = {};
 
@@ -105,6 +104,9 @@ socket.on("send-location", async data => {
  io.emit("users-location", data);
 
 });
+
+});
+
 
 
 
