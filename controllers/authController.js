@@ -5,118 +5,64 @@ const Register = require("../models/Register");
 const admin = require("../config/firebaseAdmin");
 const transporter = require("../config/mailer");
 
-// exports.forgotPassword = async (req, res) => {
-//   try {
-//     const { email } = req.body;
-
-//     if (!email) {
-//       return res.status(400).json({
-//         message: "Email is required",
-//       });
-//     }
-
-//     const user = await Register.findOne({ email });
-
-//     if (!user) {
-//       return res.json({
-//         success: true,
-//         message: "If email exists, OTP sent",
-//       });
-//     }
-
-//     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-//     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
-
-//     user.resetOtp = hashedOtp;
-//     user.resetOtpExpiry = new Date(Date.now() + 10 * 60 * 1000);
-
-//     await user.save();
-
-//     console.log("Sending OTP email to:", email);
-
-//     try {
-//       await transporter.sendMail({
-//         from: `"Radnus Distribution App" <${process.env.EMAIL_USER}>`,
-//         to: email,
-//         subject: "Password Reset OTP",
-//         html: `
-//     <h2>Password Reset</h2>
-//     <p>Your OTP is:</p>
-//     <h1 style="letter-spacing:5px">${otp}</h1>
-//     <p>This OTP expires in 10 minutes.</p>
-//   `,
-//       });
-
-//       console.log("Email sent successfully");
-//     } catch (mailErr) {
-//       console.error("EMAIL SEND ERROR:", mailErr);
-//     }
-
-//     res.json({
-//       success: true,
-//       message: "OTP sent to email",
-//     });
-//   } catch (err) {
-//     console.error("FORGOT PASSWORD ERROR:", err);
-//     res.status(500).json({
-//       success: false,
-//       message: err.message,
-//     });
-//   }
-// };
-
 exports.forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
+
     if (!email) {
-      return res.status(400).json({ success: false, message: "Email is required" });
+      return res.status(400).json({
+        message: "Email is required",
+      });
     }
 
     const user = await Register.findOne({ email });
+
     if (!user) {
-      return res.json({ success: true, message: "If email exists, OTP sent" });
+      return res.json({
+        success: true,
+        message: "If email exists, OTP sent",
+      });
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    // const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
-    // user.resetOtp = hashedOtp;
-    user.resetOtp = otp;
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+
+    user.resetOtp = hashedOtp;
     user.resetOtpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
     await user.save();
 
-    // ✅ Send email first with a timeout safety net
-    const emailPromise = transporter.sendMail({
-      from: `"Radnus Distribution App" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: "Password Reset OTP",
-      html: `
-        <h2>Password Reset</h2>
-        <p>Your OTP is:</p>
-        <h1 style="letter-spacing:5px">${otp}</h1>
-        <p>This OTP expires in 10 minutes.</p>
-      `,
-    });
-
-    // ✅ Don't let slow email delay the response beyond 5s
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Email timeout')), 5000)
-    );
+    console.log("Sending OTP email to:", email);
 
     try {
-      await Promise.race([emailPromise, timeoutPromise]);
+      await transporter.sendMail({
+        from: `"Radnus Distribution App" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: "Password Reset OTP",
+        html: `
+    <h2>Password Reset</h2>
+    <p>Your OTP is:</p>
+    <h1 style="letter-spacing:5px">${otp}</h1>
+    <p>This OTP expires in 10 minutes.</p>
+  `,
+      });
+
       console.log("Email sent successfully");
     } catch (mailErr) {
-      console.error("EMAIL SEND ERROR (non-blocking):", mailErr);
-      // ✅ Still respond success — OTP is saved in DB regardless
+      console.error("EMAIL SEND ERROR:", mailErr);
     }
 
-    return res.json({ success: true, message: "OTP sent to email" });
-
+    res.json({
+      success: true,
+      message: "OTP sent to email",
+    });
   } catch (err) {
     console.error("FORGOT PASSWORD ERROR:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
 
@@ -124,12 +70,11 @@ exports.verifyResetOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
 
-    // const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
     const user = await Register.findOne({
       email,
-      resetOtp: otp,
-      // resetOtp: hashedOtp,
+      resetOtp: hashedOtp,
       resetOtpExpiry: { $gt: Date.now() },
     });
 
