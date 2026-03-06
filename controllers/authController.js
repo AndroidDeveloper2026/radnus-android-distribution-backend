@@ -62,77 +62,11 @@ exports.forgotPassword = async (req, res) => {
   }
 };
 
-// exports.verifyResetOtp = async (req, res) => {
-//   try {
-//     const { email, otp } = req.body;
-
-//     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
-
-//     const user = await Register.findOne({
-//       email,
-//       resetOtp: hashedOtp,
-//       resetOtpExpiry: { $gt: Date.now() },
-//     });
-
-//     if (!user) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Invalid or expired OTP",
-//       });
-//     }
-
-//     res.json({
-//       success: true,
-//       message: "OTP verified",
-//     });
-//   } catch (err) {
-//     res.status(500).json({ message: err.message });
-//   }
-// };
-
-// exports.resetPassword = async (req, res) => {
-//   try {
-//     const { email, otp, password } = req.body;
-
-//     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
-
-//     const user = await Register.findOne({
-//       email,
-//       resetOtp: hashedOtp,
-//       resetOtpExpiry: { $gt: Date.now() },
-//     });
-
-//     if (!user) {
-//       return res.status(400).json({
-//         message: "Invalid or expired OTP",
-//       });
-//     }
-
-//     user.password = password;
-
-//     user.resetOtp = undefined;
-//     user.resetOtpExpiry = undefined;
-
-//     await user.save();
-
-//     res.json({
-//       success: true,
-//       message: "Password reset successful",
-//     });
-//   } catch (err) {
-//     res.status(500).json({ message: err.message });
-//   }
-// };
-
-// VERIFY RESET OTP
 exports.verifyResetOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
 
-    const hashedOtp = crypto
-      .createHash("sha256")
-      .update(otp)
-      .digest("hex");
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
     const user = await Register.findOne({
       email,
@@ -151,25 +85,16 @@ exports.verifyResetOtp = async (req, res) => {
       success: true,
       message: "OTP verified",
     });
-
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
+    res.status(500).json({ message: err.message });
   }
 };
 
-
-// RESET PASSWORD
 exports.resetPassword = async (req, res) => {
   try {
     const { email, otp, password } = req.body;
 
-    const hashedOtp = crypto
-      .createHash("sha256")
-      .update(otp)
-      .digest("hex");
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
     const user = await Register.findOne({
       email,
@@ -179,12 +104,12 @@ exports.resetPassword = async (req, res) => {
 
     if (!user) {
       return res.status(400).json({
-        success: false,
         message: "Invalid or expired OTP",
       });
     }
 
     user.password = password;
+
     user.resetOtp = undefined;
     user.resetOtpExpiry = undefined;
 
@@ -194,12 +119,8 @@ exports.resetPassword = async (req, res) => {
       success: true,
       message: "Password reset successful",
     });
-
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
+    res.status(500).json({ message: err.message });
   }
 };
 
