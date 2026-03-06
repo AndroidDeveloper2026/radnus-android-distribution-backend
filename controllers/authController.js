@@ -79,9 +79,10 @@ exports.forgotPassword = async (req, res) => {
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+    // const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
-    user.resetOtp = hashedOtp;
+    // user.resetOtp = hashedOtp;
+    user.resetOtp = otp;
     user.resetOtpExpiry = new Date(Date.now() + 10 * 60 * 1000);
     await user.save();
 
@@ -123,11 +124,12 @@ exports.verifyResetOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
 
-    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+    // const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
     const user = await Register.findOne({
       email,
-      resetOtp: hashedOtp,
+      resetOtp: otp,
+      // resetOtp: hashedOtp,
       resetOtpExpiry: { $gt: Date.now() },
     });
 
