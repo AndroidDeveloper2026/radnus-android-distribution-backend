@@ -47,65 +47,87 @@ const io = new Server(server, {
 
 io.on("connection", socket => {
 
-//   console.log("Connected", socket.id);
+ console.log("Connected", socket.id);
 
-//   socket.on("send-location", async data => {
+ socket.on("send-location", async data => {
 
-//     const { userId, sessionId, latitude, longitude } = data;
+   const { userId, sessionId, latitude, longitude } = data;
 
-//     await Location.create({
-//       userId,
-//       sessionId,
-//       latitude,
-//       longitude
-//     });
-
-//     io.emit("users-location", data);
-
-//   });
-
-
-const calculateDistance = require("./utils/distance");
-const Session = require("./models/FSEModel/Session");
-
-let lastLocation = {};
-
-socket.on("send-location", async data => {
-
- const { sessionId, latitude, longitude } = data;
-
- await Location.create(data);
-
- if (lastLocation[sessionId]) {
-
-   const prev = lastLocation[sessionId];
-
-   const distance = calculateDistance(
-     prev.latitude,
-     prev.longitude,
+   await Location.create({
+     userId,
+     sessionId,
      latitude,
      longitude
-   );
-
-   await Session.findByIdAndUpdate(sessionId, {
-     $inc: { totalDistanceKm: distance },
-     $push: {
-       route: {
-         latitude,
-         longitude
-       }
-     }
    });
 
- }
+   io.emit("users-location", data);
 
- lastLocation[sessionId] = { latitude, longitude };
-
- io.emit("users-location", data);
+ });
 
 });
 
-});
+
+// io.on("connection", socket => {
+
+// //   console.log("Connected", socket.id);
+
+// //   socket.on("send-location", async data => {
+
+// //     const { userId, sessionId, latitude, longitude } = data;
+
+// //     await Location.create({
+// //       userId,
+// //       sessionId,
+// //       latitude,
+// //       longitude
+// //     });
+
+// //     io.emit("users-location", data);
+
+// //   });
+
+
+// const calculateDistance = require("./utils/distance");
+// const Session = require("./models/FSEModel/Session");
+
+// let lastLocation = {};
+
+// socket.on("send-location", async data => {
+
+//  const { sessionId, latitude, longitude } = data;
+
+//  await Location.create(data);
+
+//  if (lastLocation[sessionId]) {
+
+//    const prev = lastLocation[sessionId];
+
+//    const distance = calculateDistance(
+//      prev.latitude,
+//      prev.longitude,
+//      latitude,
+//      longitude
+//    );
+
+//    await Session.findByIdAndUpdate(sessionId, {
+//      $inc: { totalDistanceKm: distance },
+//      $push: {
+//        route: {
+//          latitude,
+//          longitude
+//        }
+//      }
+//    });
+
+//  }
+
+//  lastLocation[sessionId] = { latitude, longitude };
+
+//  io.emit("users-location", data);
+
+// });
+
+// });
 
 
 
