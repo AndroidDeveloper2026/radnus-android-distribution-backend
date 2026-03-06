@@ -5,70 +5,6 @@ const Register = require("../models/Register");
 const admin = require("../config/firebaseAdmin");
 const transporter = require("../config/mailer");
 
-// exports.forgotPassword = async (req, res) => {
-//   try {
-//     const { email } = req.body;
-
-//     if (!email) {
-//       return res.status(400).json({
-//         message: "Email is required",
-//       });
-//     }
-
-//     const user = await Register.findOne({ email });
-
-//     if (!user) {
-//       return res.json({
-//         success: true,
-//         message: "If email exists, OTP sent",
-//       });
-//     }
-
-//     // if (!user) {
-//     //   return res.status(404).json({
-//     //     success: false,
-//     //     message: "Email not registered",
-//     //   });
-//     // }
-
-//     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-//     // hash OTP
-//     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
-
-//     user.resetOtp = hashedOtp;
-//     user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
-
-//     await user.save();
-
-//     // SEND EMAIL HERE
-
-//     await transporter.sendMail({
-//       from: `"Radnus Distribution App" <${process.env.EMAIL_USER}>`,
-//       to: email,
-//       subject: "Password Reset OTP",
-//       html: `
-//     <h2>Password Reset</h2>
-//     <p>Your OTP is:</p>
-//     <h1>${otp}</h1>
-//     <p>This OTP expires in 10 minutes.</p>
-//   `,
-//     });
-
-//     res.json({
-//       success: true,
-//       message: "OTP sent to email",
-//       // otp, //remove for product
-//     });
-//   } catch (err) {
-//     console.error("FORGOT PASSWORD ERROR:", err);
-//     res.status(500).json({
-//       success: false,
-//       message: err.message,
-//     });
-//   }
-// };
-
 exports.forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
@@ -97,24 +33,26 @@ exports.forgotPassword = async (req, res) => {
 
     await user.save();
 
-    res.json({
-      success: true,
-      message: "OTP sent to email",
-    });
+    console.log("Sending OTP email to:", email);
 
-    // send email in background
-    transporter.sendMail({
+    await transporter.sendMail({
       from: `"Radnus Distribution App" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: "Password Reset OTP",
       html: `
         <h2>Password Reset</h2>
         <p>Your OTP is:</p>
-        <h1>${otp}</h1>
+        <h1 style="letter-spacing:5px">${otp}</h1>
         <p>This OTP expires in 10 minutes.</p>
       `,
-    }).catch(err => console.error("MAIL ERROR:", err));
+    });
 
+    console.log("Email sent successfully");
+
+    res.json({
+      success: true,
+      message: "OTP sent to email",
+    });
   } catch (err) {
     console.error("FORGOT PASSWORD ERROR:", err);
     res.status(500).json({
@@ -124,11 +62,77 @@ exports.forgotPassword = async (req, res) => {
   }
 };
 
+// exports.verifyResetOtp = async (req, res) => {
+//   try {
+//     const { email, otp } = req.body;
+
+//     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+
+//     const user = await Register.findOne({
+//       email,
+//       resetOtp: hashedOtp,
+//       resetOtpExpiry: { $gt: Date.now() },
+//     });
+
+//     if (!user) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid or expired OTP",
+//       });
+//     }
+
+//     res.json({
+//       success: true,
+//       message: "OTP verified",
+//     });
+//   } catch (err) {
+//     res.status(500).json({ message: err.message });
+//   }
+// };
+
+// exports.resetPassword = async (req, res) => {
+//   try {
+//     const { email, otp, password } = req.body;
+
+//     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+
+//     const user = await Register.findOne({
+//       email,
+//       resetOtp: hashedOtp,
+//       resetOtpExpiry: { $gt: Date.now() },
+//     });
+
+//     if (!user) {
+//       return res.status(400).json({
+//         message: "Invalid or expired OTP",
+//       });
+//     }
+
+//     user.password = password;
+
+//     user.resetOtp = undefined;
+//     user.resetOtpExpiry = undefined;
+
+//     await user.save();
+
+//     res.json({
+//       success: true,
+//       message: "Password reset successful",
+//     });
+//   } catch (err) {
+//     res.status(500).json({ message: err.message });
+//   }
+// };
+
+// VERIFY RESET OTP
 exports.verifyResetOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
 
-    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+    const hashedOtp = crypto
+      .createHash("sha256")
+      .update(otp)
+      .digest("hex");
 
     const user = await Register.findOne({
       email,
@@ -147,16 +151,25 @@ exports.verifyResetOtp = async (req, res) => {
       success: true,
       message: "OTP verified",
     });
+
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
 
+
+// RESET PASSWORD
 exports.resetPassword = async (req, res) => {
   try {
     const { email, otp, password } = req.body;
 
-    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+    const hashedOtp = crypto
+      .createHash("sha256")
+      .update(otp)
+      .digest("hex");
 
     const user = await Register.findOne({
       email,
@@ -166,12 +179,12 @@ exports.resetPassword = async (req, res) => {
 
     if (!user) {
       return res.status(400).json({
+        success: false,
         message: "Invalid or expired OTP",
       });
     }
 
     user.password = password;
-
     user.resetOtp = undefined;
     user.resetOtpExpiry = undefined;
 
@@ -181,8 +194,12 @@ exports.resetPassword = async (req, res) => {
       success: true,
       message: "Password reset successful",
     });
+
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
 
@@ -244,7 +261,6 @@ exports.verifyOtp = async (req, res) => {
     });
   }
 };
-
 
 exports.resendOtp = async (req, res) => {
   try {
