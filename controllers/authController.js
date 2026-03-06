@@ -17,19 +17,19 @@ exports.forgotPassword = async (req, res) => {
 
     const user = await Register.findOne({ email });
 
-    // if (!user) {
-    //   return res.json({
-    //     success: true,
-    //     message: "If email exists, OTP sent",
-    //   });
-    // }
-
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "Email not registered",
+      return res.json({
+        success: true,
+        message: "If email exists, OTP sent",
       });
     }
+
+    // if (!user) {
+    //   return res.status(404).json({
+    //     success: false,
+    //     message: "Email not registered",
+    //   });
+    // }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
