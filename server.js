@@ -45,54 +45,68 @@ const io = new Server(server, {
   cors: { origin: "*" },
 });
 
-// 🔥 Store users (temporary or DB)
-// let users = {};
+// io.on("connection", socket => {
 
-// io.on("connection", (socket) => {
-//   console.log("Connected:", socket.id);
+//   console.log("Connected", socket.id);
 
-//   socket.on("send-location", async (data) => {
+//   socket.on("send-location", async data => {
+
 //     const { userId, sessionId, latitude, longitude } = data;
 
-//     if (!userId || !latitude || !longitude) {
-//       return res.status(400).json({ message: "Missing fields" });
-//     }
-    
 //     await Location.create({
 //       userId,
 //       sessionId,
 //       latitude,
-//       longitude,
+//       longitude
 //     });
 
-//     io.emit("users-location", { userId, latitude, longitude });
+//     io.emit("users-location", data);
+
 //   });
 
-//   socket.on("disconnect", () => {
-//     console.log("Disconnected:", socket.id);
-//   });
 // });
 
-io.on("connection", socket => {
+const calculateDistance = require("./utils/calculateDistance");
+const Session = require("./models/SessionModel");
 
-  console.log("Connected", socket.id);
+let lastLocation = {};
 
-  socket.on("send-location", async data => {
+socket.on("send-location", async data => {
 
-    const { userId, sessionId, latitude, longitude } = data;
+ const { sessionId, latitude, longitude } = data;
 
-    await Location.create({
-      userId,
-      sessionId,
-      latitude,
-      longitude
-    });
+ await Location.create(data);
 
-    io.emit("users-location", data);
+ if (lastLocation[sessionId]) {
 
-  });
+   const prev = lastLocation[sessionId];
+
+   const distance = calculateDistance(
+     prev.latitude,
+     prev.longitude,
+     latitude,
+     longitude
+   );
+
+   await Session.findByIdAndUpdate(sessionId, {
+     $inc: { totalDistanceKm: distance },
+     $push: {
+       route: {
+         latitude,
+         longitude
+       }
+     }
+   });
+
+ }
+
+ lastLocation[sessionId] = { latitude, longitude };
+
+ io.emit("users-location", data);
 
 });
+
+
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
