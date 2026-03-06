@@ -47,24 +47,18 @@ const io = new Server(server, {
 
 io.on("connection", socket => {
 
- console.log("Connected", socket.id);
+ console.log("Socket connected:", socket.id);
 
- socket.on("send-location", async data => {
+ socket.on("send-location", data => {
 
-   const { userId, sessionId, latitude, longitude } = data;
-
-   await Location.create({
-     userId,
-     sessionId,
-     latitude,
-     longitude
-   });
+   console.log("Location from mobile:", data);
 
    io.emit("users-location", data);
 
  });
 
 });
+
 
 
 // io.on("connection", socket => {
