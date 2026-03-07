@@ -1,7 +1,7 @@
 const express = require("express");
 const dotenv = require("dotenv");
 const connectDB = require("./config/db");
-const cors = require("cors");
+// const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
 const Location = require("./models/LocationModel/Location");
@@ -15,7 +15,7 @@ dotenv.config({
 });
 connectDB();
 
-app.use(cors());
+// app.use(cors());
 
 const startAutoEndJob = require("./cron/autoEndDay");
 startAutoEndJob();
