@@ -1,18 +1,20 @@
-const express = require("express");
 const dotenv = require("dotenv");
+const express = require("express");
 const connectDB = require("./config/db");
 // const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
 const Location = require("./models/LocationModel/Location");
 const app = express();
-
 const dns = require("dns");
-dns.setServers(["1.1.1.1", "8.8.8.8"]);
-dns.setDefaultResultOrder("ipv4first");
+
+
 dotenv.config({
   path: `.env.${process.env.NODE_ENV || "dev"}`,
 });
+dns.setServers(["1.1.1.1", "8.8.8.8"]);
+dns.setDefaultResultOrder("ipv4first");
+
 connectDB();
 
 // app.use(cors());

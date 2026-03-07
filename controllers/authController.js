@@ -1,3 +1,4 @@
+
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
@@ -67,65 +68,64 @@ const transporter = require("../config/mailer");
 // };
 
 exports.forgotPassword = async (req, res) => {
-  try {
-    const { email } = req.body;
+ try {
 
-    if (!email) {
-      return res.status(400).json({
-        message: "Email is required",
-      });
-    }
+   console.log("---- EMAIL_USER: ----", process.env.EMAIL_USER);
+   const { email } = req.body;
 
-    const user = await Register.findOne({ email });
+   console.log("EMAIL RECEIVED:", email);
 
-    // if (!user) {
-    //   return res.json({
-    //     success: true,
-    //     message: "If email exists, OTP sent",
-    //   });
-    // }
+   if (!email) {
+     return res.status(400).json({
+       message: "Email is required",
+     });
+   }
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "Email not registered",
-      });
-    }
+   const user = await Register.findOne({ email });
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+   if (!user) {
+     return res.status(404).json({
+       success: false,
+       message: "Email not registered",
+     });
+   }
 
-    // hash OTP
-    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+   // Generate OTP
+   const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    user.resetOtp = hashedOtp;
-    user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
+   // Hash OTP
+   const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
-    await user.save();
+   user.resetOtp = hashedOtp;
+   user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
 
-    // SEND EMAIL HERE
+   await user.save();
 
-    await transporter.sendMail({
-      from: `"Radnus Distribution App" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: "Password Reset OTP",
-      html: `
-    <h2>Password Reset</h2>
-    <p>Your OTP is:</p>
-    <h1>${otp}</h1>
-    <p>This OTP expires in 10 minutes.</p>
-  `,
-    });
+   const info = await transporter.sendMail({
+     from: `"Radnus Distribution App" <${process.env.EMAIL_USER}>`,
+     to: email,
+     subject: "Password Reset OTP",
+     html: `
+       <h2>Password Reset</h2>
+       <p>Your OTP is:</p>
+       <h1>${otp}</h1>
+       <p>This OTP expires in 10 minutes.</p>
+     `,
+   });
 
-    res.json({
-      success: true,
-      message: "OTP sent to email",
-      // otp, //remove for product
-    });
-  } catch (err) {
-    console.error("FORGOT PASSWORD ERROR:", err);
-    res.status(500).json({ message: err.message });
-  }
+   console.log("MAIL SENT:", info.response);
+
+   res.json({
+     success: true,
+     message: "OTP sent to email",
+   });
+
+ } catch (err) {
+   console.error("FORGOT PASSWORD ERROR:", err);
+   res.status(500).json({ message: err.message });
+ }
 };
+
 
 
 
