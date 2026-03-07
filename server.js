@@ -38,6 +38,8 @@ app.use("/api/location", require("./routes/locationRoutes"));
 app.use("/api/retailers", require("./routes/retailerRoute"));
 app.use("/api/fse", require("./routes/fseRoutes"));
 app.use("/api/session", require("./routes/sessionRoutes"));
+app.use("/api/executives", require("./routes/executiveRoutes"));
+app.use("/api/managers", require("./routes/managerRoutes"));
 // ✅ Create HTTP server
 const server = http.createServer(app);
 

@@ -86,7 +86,7 @@ exports.updateProduct = async (req, res) => {
   } catch (err) {
     console.error("UPDATE PRODUCT ERROR:", err);
     res.status(500).json({ message: err.message });
-  }
+  } 
 };
 
 
