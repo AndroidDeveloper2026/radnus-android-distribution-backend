@@ -37,7 +37,7 @@ exports.forgotPassword = async (req, res) => {
 
     try {
       await transporter.sendMail({
-        from: `"Radnus Distribution App" <${process.env.EMAIL_USER}>`,
+        from: `Radnus Distribution App <${process.env.EMAIL_USER}>`,
         to: email,
         subject: "Password Reset OTP",
         html: `
