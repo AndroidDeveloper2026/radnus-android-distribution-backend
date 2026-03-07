@@ -9,6 +9,7 @@ const app = express();
 
 const dns = require("dns");
 dns.setServers(["1.1.1.1", "8.8.8.8"]);
+dns.setDefaultResultOrder("ipv4first");
 dotenv.config({
   path: `.env.${process.env.NODE_ENV || "dev"}`,
 });
