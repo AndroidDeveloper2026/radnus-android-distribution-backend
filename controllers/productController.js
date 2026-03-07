@@ -47,18 +47,48 @@ exports.getProducts = async (req, res) => {
   res.json(products);
 };
 
-/* UPDATE PRODUCT */
+// /* UPDATE PRODUCT */
+// exports.updateProduct = async (req, res) => {
+//   const image = req.file ? req.file.path : undefined;
+
+//   const updated = await Product.findByIdAndUpdate(
+//     req.params.id,
+//     { ...req.body, ...(image && { image }) },
+//     { new: true },
+//   );
+
+//   res.json(updated);
+// };
+
 exports.updateProduct = async (req, res) => {
-  const image = req.file ? req.file.path : undefined;
+  try {
+    let imageUrl;
 
-  const updated = await Product.findByIdAndUpdate(
-    req.params.id,
-    { ...req.body, ...(image && { image }) },
-    { new: true },
-  );
+    // If new image uploaded
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, "products");
+      imageUrl = result.secure_url;
+    }
 
-  res.json(updated);
+    const updateData = {
+      ...req.body,
+      ...(imageUrl && { image: imageUrl }),
+    };
+
+    const updated = await Product.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true }
+    );
+
+    res.json(updated);
+
+  } catch (err) {
+    console.error("UPDATE PRODUCT ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
 };
+
 
 /* DELETE PRODUCT */
 exports.deleteProduct = async (req, res) => {
