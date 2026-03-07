@@ -68,63 +68,81 @@ const transporter = require("../config/mailer");
 // };
 
 exports.forgotPassword = async (req, res) => {
- try {
+  try {
+    const { email } = req.body;
 
-   console.log("---- EMAIL_USER: ----", process.env.EMAIL_USER);
-   const { email } = req.body;
+    console.log("📩 Forgot Password request for:", email);
 
-   console.log("EMAIL RECEIVED:", email);
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Email is required" });
+    }
 
-   if (!email) {
-     return res.status(400).json({
-       message: "Email is required",
-     });
-   }
+    // Find user - using case-insensitive search
+    const user = await Register.findOne({ email: email.toLowerCase().trim() });
 
-   const user = await Register.findOne({ email });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Email not registered",
+      });
+    }
 
-   if (!user) {
-     return res.status(404).json({
-       success: false,
-       message: "Email not registered",
-     });
-   }
+    // 1. Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-   // Generate OTP
-   const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // 2. Hash OTP before saving to DB
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
-   // Hash OTP
-   const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+    user.resetOtp = hashedOtp;
+    user.resetOtpExpiry = Date.now() + 10 * 60 * 1000; // 10 Minutes expiry
 
-   user.resetOtp = hashedOtp;
-   user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
+    await user.save();
 
-   await user.save();
+    // 3. Send Email
+    const mailOptions = {
+      from: `"Radnus Distribution App" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "Password Reset OTP",
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; padding: 20px;">
+          <h2 style="color: #333; text-align: center;">Password Reset</h2>
+          <p>Hello,</p>
+          <p>You requested a password reset. Please use the following OTP to reset your password:</p>
+          <div style="background: #f4f4f4; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #007bff;">
+            ${otp}
+          </div>
+          <p style="margin-top: 20px;">This OTP is valid for <b>10 minutes</b>.</p>
+          <p>If you did not request this, please ignore this email.</p>
+          <hr style="border:none; border-top:1px solid #eee" />
+          <p style="font-size: 12px; color: #888;">Radnus Distribution Team</p>
+        </div>
+      `,
+    };
 
-   const info = await transporter.sendMail({
-     from: `"Radnus Distribution App" <${process.env.EMAIL_USER}>`,
-     to: email,
-     subject: "Password Reset OTP",
-     html: `
-       <h2>Password Reset</h2>
-       <p>Your OTP is:</p>
-       <h1>${otp}</h1>
-       <p>This OTP expires in 10 minutes.</p>
-     `,
-   });
+    const info = await transporter.sendMail(mailOptions);
+    console.log("📨 Email Sent Successfully:", info.response);
 
-   console.log("MAIL SENT:", info.response);
+    return res.status(200).json({
+      success: true,
+      message: "OTP sent to your email address",
+    });
 
-   res.json({
-     success: true,
-     message: "OTP sent to email",
-   });
+  } catch (err) {
+    console.error("🔥 FORGOT PASSWORD ERROR:", err);
+    
+    let userFriendlyMessage = "Failed to send OTP. Please try again later.";
+    
+    if (err.code === 'ETIMEDOUT') userFriendlyMessage = "Connection timed out. Check your internet or server settings.";
+    if (err.code === 'EAUTH') userFriendlyMessage = "Email authentication failed. Check App Password.";
 
- } catch (err) {
-   console.error("FORGOT PASSWORD ERROR:", err);
-   res.status(500).json({ message: err.message });
- }
+    return res.status(500).json({ 
+      success: false, 
+      message: userFriendlyMessage,
+      error: err.message 
+    });
+  }
 };
+
 
 
 

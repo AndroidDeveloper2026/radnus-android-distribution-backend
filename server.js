@@ -1,4 +1,7 @@
 const dotenv = require("dotenv");
+dotenv.config({
+  path: `.env.${process.env.NODE_ENV || "dev"}`,
+});
 const express = require("express");
 const connectDB = require("./config/db");
 // const cors = require("cors");
@@ -8,10 +11,6 @@ const Location = require("./models/LocationModel/Location");
 const app = express();
 const dns = require("dns");
 
-
-dotenv.config({
-  path: `.env.${process.env.NODE_ENV || "dev"}`,
-});
 dns.setServers(["1.1.1.1", "8.8.8.8"]);
 dns.setDefaultResultOrder("ipv4first");
 
@@ -21,7 +20,6 @@ connectDB();
 
 const startAutoEndJob = require("./cron/autoEndDay");
 startAutoEndJob();
-
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -48,18 +46,14 @@ const io = new Server(server, {
   cors: { origin: "*" },
 });
 
-io.on("connection", socket => {
+io.on("connection", (socket) => {
+  console.log("Socket connected:", socket.id);
 
- console.log("Socket connected:", socket.id);
+  socket.on("send-location", (data) => {
+    console.log("Location from mobile:", data);
 
- socket.on("send-location", data => {
-
-   console.log("Location from mobile:", data);
-
-   io.emit("users-location", data);
-
- });
-
+    io.emit("users-location", data);
+  });
 });
 
 const PORT = process.env.PORT || 5000;
