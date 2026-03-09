@@ -2,9 +2,12 @@ const Manager = require("../models/Manager/managerModel");
 
 exports.createManager = async (req, res) => {
   try {
+    console.log("-- manager BODY:", req.body);
+    console.log("-- manager FILE:", req.file);
+
     const manager = await Manager.create({
       ...req.body,
-      photo: req.file?.path,
+      photo: req.file ? req.file.path : "",
     });
 
     res.status(201).json(manager);
@@ -24,9 +27,17 @@ exports.getManagers = async (req, res) => {
 
 exports.updateManager = async (req, res) => {
   try {
+    const updateData = {
+      ...req.body,
+    };
+
+    if (req.file) {
+      updateData.photo = req.file.path;
+    }
+
     const manager = await Manager.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updateData,
       { new: true }
     );
 

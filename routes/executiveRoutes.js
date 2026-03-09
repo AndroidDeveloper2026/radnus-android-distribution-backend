@@ -7,10 +7,9 @@ const {
   deleteExecutive,
 } = require("../controllers/executiveController");
 
-
 /* CREATE */
 
-router.post("/", upload.single("photo"), createExecutive);
+router.post("/executives", upload.single("photo"), createExecutive);
 
 /* GET */
 

@@ -1,6 +1,6 @@
 
 const router = require("express").Router();
-// const upload = require("../middleware/uploadMemory");
+const upload = require("../middleware/uploadMemory");
 const {
   createManager,
   getManagers,
@@ -8,8 +8,7 @@ const {
   deleteManager,
 } = require("../controllers/managerController.js");
 
-
-router.post("/", createManager);
+router.post("/", upload.single("photo"), createManager);
 router.get("/", getManagers);
 router.put("/:id", updateManager);
 router.delete("/:id", deleteManager);
