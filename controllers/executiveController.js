@@ -3,27 +3,32 @@ const cloudinary = require("cloudinary").v2;
 
 /* CREATE EXECUTIVE */
 
+const uploadToCloudinary = require("../utils/cloudinaryUpload");
+
 exports.createExecutive = async (req, res) => {
   try {
-    let photo = "";
+    let photoUrl = null;
 
     if (req.file) {
-      const result = await cloudinary.uploader.upload(req.file.path, {
-        folder: "executives",
-      });
+      const result = await uploadToCloudinary(
+        req.file.buffer,
+        "executives"
+      );
 
-      photo = result.secure_url;
+      photoUrl = result.secure_url;
     }
 
     const executive = new Executive({
       ...req.body,
-      photo,
+      photo: photoUrl,
     });
 
     await executive.save();
 
-    res.json(executive);
+    res.status(201).json(executive);
+
   } catch (error) {
+    console.error("CREATE EXECUTIVE ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };

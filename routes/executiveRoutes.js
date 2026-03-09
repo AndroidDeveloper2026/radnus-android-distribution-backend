@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const upload = require("../middleware/uploadMemory");
+
 const {
   createExecutive,
   getExecutives,
@@ -8,19 +9,15 @@ const {
 } = require("../controllers/executiveController");
 
 /* CREATE */
-
 router.post("/", upload.single("photo"), createExecutive);
 
 /* GET */
-
 router.get("/", getExecutives);
 
 /* UPDATE */
-
-router.put("/:id", updateExecutive);
+router.put("/:id", upload.single("photo"), updateExecutive);
 
 /* DELETE */
-
 router.delete("/:id", deleteExecutive);
 
 module.exports = router;
