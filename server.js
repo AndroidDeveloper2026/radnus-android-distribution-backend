@@ -72,13 +72,38 @@ app.use((req, res, next) => {
  next();
 });
 
-io.on("connection", (socket) => {
- console.log("Socket connected:", socket.id);
+io.on("connection", socket => {
 
- socket.on("disconnect", () => {
-   console.log("Socket disconnected");
- });
+  socket.on("send-location", async data => {
+
+    const { sessionId, latitude, longitude } = data;
+
+    await Session.updateOne(
+      { _id: sessionId },
+      {
+        $push: {
+          route: {
+            latitude,
+            longitude,
+            time: new Date()
+          }
+        }
+      }
+    );
+
+    io.emit("users-location", data);
+
+  });
+  
 });
+
+// io.on("connection", (socket) => {
+//  console.log("Socket connected:", socket.id);
+
+//  socket.on("disconnect", () => {
+//    console.log("Socket disconnected");
+//  });
+// });
 
 app.use("/api/location", require("./routes/locationRoutes"));
 
