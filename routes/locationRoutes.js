@@ -1,156 +1,106 @@
 // const express = require("express");
 // const router = express.Router();
 // const Location = require("../models/LocationModel/Location");
-// const { getDistance } = require("geolib");
 
 // router.post("/update", async (req, res) => {
+//  const { sessionId, latitude, longitude } = req.body;
 
-//  try {
+//  const location = new Location({
+//    sessionId,
+//    latitude,
+//    longitude,
+//  });
 
-//    const { userId, sessionId, latitude, longitude } = req.body;
+//  await location.save();
 
-//    if (!sessionId || !latitude || !longitude) {
-//      return res.status(400).json({ message: "Invalid data" });
-//    }
-
-//    const lastLocation = await Location.findOne({ sessionId })
-//      .sort({ timestamp: -1 });
-
-//    let distance = 0;
-
-//    if (lastLocation) {
-
-//      distance = getDistance(
-//        {
-//          latitude: lastLocation.latitude,
-//          longitude: lastLocation.longitude
-//        },
-//        {
-//          latitude,
-//          longitude
-//        }
-//      );
-
-//      // ignore GPS drift (<10 meters)
-//      if (distance < 10) {
-//        return res.json({ ignored: true });
-//      }
-//    }
-
-//    const location = new Location({
-//      userId,
-//      sessionId,
-//      latitude,
-//      longitude
-//    });
-
-//    await location.save();
-
-//    // emit socket
-//    req.io.emit("users-location", {
-//      sessionId,
-//      latitude,
-//      longitude
-//    });
-
-//    res.json({
-//      success: true,
-//      distanceMeters: distance
-//    });
-
-//  } catch (err) {
-//    console.log(err);
-//    res.status(500).json({ message: "Server error" });
-//  }
+//  res.json({ success: true });
 // });
 
-
 // router.get("/route/:sessionId", async (req, res) => {
-
 //  const data = await Location.find({
-//    sessionId: req.params.sessionId
+//    sessionId: req.params.sessionId,
 //  }).sort({ timestamp: 1 });
 
 //  res.json(data);
 // });
 
-
 // module.exports = router;
-
 
 const express = require("express");
 const router = express.Router();
-
 const Location = require("../models/LocationModel/Location");
-const Session = require("../models/FSEModel/Session");
-const calculateDistance = require("../utils/distance");
+const { getDistance } = require("geolib");
 
 router.post("/update", async (req, res) => {
 
-  try {
+ try {
 
-    const { userId, sessionId, latitude, longitude } = req.body;
+   const { userId, sessionId, latitude, longitude } = req.body;
 
-    if (!sessionId || !latitude || !longitude) {
-      return res.status(400).json({ message: "Invalid location" });
-    }
+   if (!sessionId || !latitude || !longitude) {
+     return res.status(400).json({ message: "Invalid data" });
+   }
 
-    const last = await Location.findOne({ sessionId })
-      .sort({ timestamp: -1 });
+   const lastLocation = await Location.findOne({ sessionId })
+     .sort({ timestamp: -1 });
 
-    let distance = 0;
+   let distance = 0;
 
-    if (last) {
+   if (lastLocation) {
 
-      distance = calculateDistance(
-        last.latitude,
-        last.longitude,
-        latitude,
-        longitude
-      );
+     distance = getDistance(
+       {
+         latitude: lastLocation.latitude,
+         longitude: lastLocation.longitude
+       },
+       {
+         latitude,
+         longitude
+       }
+     );
 
-      if (distance < 0.01) {
-        return res.json({ ignored: true });
-      }
+     // ignore GPS drift (<10 meters)
+     if (distance < 10) {
+       return res.json({ ignored: true });
+     }
+   }
 
-    }
+   const location = new Location({
+     userId,
+     sessionId,
+     latitude,
+     longitude
+   });
 
-    await Location.create({
-      userId,
-      sessionId,
-      latitude,
-      longitude
-    });
+   await location.save();
 
-    await Session.findByIdAndUpdate(sessionId, {
-      $inc: { totalDistanceKm: distance }
-    });
+   // emit socket
+   req.io.emit("users-location", {
+     sessionId,
+     latitude,
+     longitude
+   });
 
-    req.io.emit("users-location", {
-      sessionId,
-      latitude,
-      longitude
-    });
+   res.json({
+     success: true,
+     distanceMeters: distance
+   });
 
-    res.json({ success: true });
-
-  } catch (err) {
-
-    console.log(err);
-    res.status(500).json({ message: "Location error" });
-
-  }
-
+ } catch (err) {
+   console.log(err);
+   res.status(500).json({ message: "Server error" });
+ }
 });
+
 
 router.get("/route/:sessionId", async (req, res) => {
 
-  const route = await Location.find({
-    sessionId: req.params.sessionId
-  }).sort({ timestamp: 1 });
+ const data = await Location.find({
+   sessionId: req.params.sessionId
+ }).sort({ timestamp: 1 });
 
-  res.json(route);
-
+ res.json(data);
 });
+
 
 module.exports = router;
