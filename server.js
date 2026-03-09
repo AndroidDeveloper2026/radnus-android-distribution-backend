@@ -6,7 +6,8 @@ const express = require("express");
 const connectDB = require("./config/db");
 // const cors = require("cors");
 const http = require("http");
-const { Server } = require("socket.io");
+// const { Server } = require("socket.io");
+const socketIo = require("socket.io");
 const Location = require("./models/LocationModel/Location");
 const app = express();
 const dns = require("dns");
@@ -33,30 +34,54 @@ app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/territory", require("./routes/territoryRoutes"));
 
 app.use("/api/distributors", require("./routes/distributorRoutes"));
-app.use("/api/location", require("./routes/locationRoutes"));
+// app.use("/api/location", require("./routes/locationRoutes"));
 
 app.use("/api/retailers", require("./routes/retailerRoute"));
 app.use("/api/fse", require("./routes/fseRoutes"));
 app.use("/api/session", require("./routes/sessionRoutes"));
 app.use("/api/executives", require("./routes/executiveRoutes"));
 app.use("/api/managers", require("./routes/managerRoutes"));
-// ✅ Create HTTP server
+// // ✅ Create HTTP server
+// const server = http.createServer(app);
+
+// // ✅ Attach Socket.io
+// const io = new Server(server, {
+//   cors: { origin: "*" },
+// });
+
+// io.on("connection", (socket) => {
+//   console.log("Socket connected:", socket.id);
+
+//   socket.on("send-location", (data) => {
+//     console.log("Location from mobile:", data);
+
+//     io.emit("users-location", data);
+//   });
+// });
+
 const server = http.createServer(app);
 
-// ✅ Attach Socket.io
-const io = new Server(server, {
-  cors: { origin: "*" },
+const io = socketIo(server, {
+ cors: {
+   origin: "*"
+ }
+});
+
+app.use((req, res, next) => {
+ req.io = io;
+ next();
 });
 
 io.on("connection", (socket) => {
-  console.log("Socket connected:", socket.id);
+ console.log("Socket connected:", socket.id);
 
-  socket.on("send-location", (data) => {
-    console.log("Location from mobile:", data);
-
-    io.emit("users-location", data);
-  });
+ socket.on("disconnect", () => {
+   console.log("Socket disconnected");
+ });
 });
+
+app.use("/api/location", require("./routes/locationRoutes"));
+
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
