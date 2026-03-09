@@ -16,27 +16,32 @@ exports.createManager = async (req, res) => {
       photoUrl = result.secure_url;
     }
 
-    const manager = await Manager.create({
+    const manager = new Manager({
       ...req.body,
       photo: photoUrl,
     });
 
+    await manager.save();
+
     res.status(201).json(manager);
-  } catch (err) {
-    console.error("CREATE MANAGER ERROR:", err);
-    res.status(500).json({ message: err.message });
+
+  } catch (error) {
+    console.error("CREATE MANAGER ERROR:", error);
+    res.status(500).json({ message: error.message });
   }
 };
 
 
-/* GET MANAGERS */
+/* GET ALL MANAGERS */
 
 exports.getManagers = async (req, res) => {
   try {
-    const list = await Manager.find().sort({ createdAt: -1 });
-    res.json(list);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
+    const managers = await Manager.find().sort({ createdAt: -1 });
+
+    res.json(managers);
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -63,9 +68,10 @@ exports.updateManager = async (req, res) => {
     );
 
     res.json(manager);
-  } catch (err) {
-    console.error("UPDATE MANAGER ERROR:", err);
-    res.status(500).json({ message: err.message });
+
+  } catch (error) {
+    console.error("UPDATE MANAGER ERROR:", error);
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -77,7 +83,8 @@ exports.deleteManager = async (req, res) => {
     await Manager.findByIdAndDelete(req.params.id);
 
     res.json({ message: "Manager deleted" });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 };
