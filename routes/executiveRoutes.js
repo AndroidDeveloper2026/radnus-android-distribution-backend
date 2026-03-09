@@ -9,7 +9,7 @@ const {
 
 /* CREATE */
 
-router.post("/executives", upload.single("photo"), createExecutive);
+router.post("/", upload.single("photo"), createExecutive);
 
 /* GET */
 
