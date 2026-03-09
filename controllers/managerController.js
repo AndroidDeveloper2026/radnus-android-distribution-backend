@@ -1,20 +1,35 @@
 const Manager = require("../models/Manager/managerModel");
+const uploadToCloudinary = require("../utils/cloudinaryUpload");
+
+/* CREATE MANAGER */
 
 exports.createManager = async (req, res) => {
   try {
-    console.log("-- manager BODY:", req.body);
-    console.log("-- manager FILE:", req.file);
+    let photoUrl = null;
+
+    if (req.file) {
+      const result = await uploadToCloudinary(
+        req.file.buffer,
+        "managers"
+      );
+
+      photoUrl = result.secure_url;
+    }
 
     const manager = await Manager.create({
       ...req.body,
-      photo: req.file ? req.file.path : "",
+      photo: photoUrl,
     });
 
     res.status(201).json(manager);
   } catch (err) {
+    console.error("CREATE MANAGER ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };
+
+
+/* GET MANAGERS */
 
 exports.getManagers = async (req, res) => {
   try {
@@ -25,14 +40,20 @@ exports.getManagers = async (req, res) => {
   }
 };
 
+
+/* UPDATE MANAGER */
+
 exports.updateManager = async (req, res) => {
   try {
-    const updateData = {
-      ...req.body,
-    };
+    let updateData = { ...req.body };
 
     if (req.file) {
-      updateData.photo = req.file.path;
+      const result = await uploadToCloudinary(
+        req.file.buffer,
+        "managers"
+      );
+
+      updateData.photo = result.secure_url;
     }
 
     const manager = await Manager.findByIdAndUpdate(
@@ -43,13 +64,18 @@ exports.updateManager = async (req, res) => {
 
     res.json(manager);
   } catch (err) {
+    console.error("UPDATE MANAGER ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };
 
+
+/* DELETE MANAGER */
+
 exports.deleteManager = async (req, res) => {
   try {
     await Manager.findByIdAndDelete(req.params.id);
+
     res.json({ message: "Manager deleted" });
   } catch (err) {
     res.status(500).json({ message: err.message });

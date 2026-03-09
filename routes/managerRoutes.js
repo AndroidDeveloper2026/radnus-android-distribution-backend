@@ -10,7 +10,7 @@ const {
 
 router.post("/", upload.single("photo"), createManager);
 router.get("/", getManagers);
-router.put("/:id", updateManager);
+router.put("/:id", upload.single("photo"), updateManager);
 router.delete("/:id", deleteManager);
 
 module.exports = router;
