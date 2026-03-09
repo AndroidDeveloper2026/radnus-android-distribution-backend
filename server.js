@@ -4,9 +4,9 @@ dotenv.config({
 });
 const express = require("express");
 const connectDB = require("./config/db");
+const startAutoEndJob = require("./cron/autoEndDay");
 // const cors = require("cors");
 const http = require("http");
-// const { Server } = require("socket.io");
 const socketIo = require("socket.io");
 const Location = require("./models/LocationModel/Location");
 const app = express();
@@ -18,10 +18,6 @@ dns.setDefaultResultOrder("ipv4first");
 connectDB();
 
 // app.use(cors());
-
-const startAutoEndJob = require("./cron/autoEndDay");
-startAutoEndJob();
-
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -94,7 +90,7 @@ io.on("connection", socket => {
     io.emit("users-location", data);
 
   });
-  
+
 });
 
 // io.on("connection", (socket) => {
@@ -106,7 +102,7 @@ io.on("connection", socket => {
 // });
 
 app.use("/api/location", require("./routes/locationRoutes"));
-
+startAutoEndJob();
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));

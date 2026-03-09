@@ -10,10 +10,7 @@ exports.createExecutive = async (req, res) => {
     let photoUrl = null;
 
     if (req.file) {
-      const result = await uploadToCloudinary(
-        req.file.buffer,
-        "executives"
-      );
+      const result = await uploadToCloudinary(req.file.buffer, "executives");
 
       photoUrl = result.secure_url;
     }
@@ -26,13 +23,11 @@ exports.createExecutive = async (req, res) => {
     await executive.save();
 
     res.status(201).json(executive);
-
   } catch (error) {
     console.error("CREATE EXECUTIVE ERROR:", error);
     res.status(500).json({ message: error.message });
   }
 };
-
 
 /* GET ALL EXECUTIVES */
 
@@ -46,7 +41,6 @@ exports.getExecutives = async (req, res) => {
   }
 };
 
-
 /* UPDATE EXECUTIVE */
 
 exports.updateExecutive = async (req, res) => {
@@ -54,9 +48,7 @@ exports.updateExecutive = async (req, res) => {
     let updateData = { ...req.body };
 
     if (req.file) {
-      const result = await cloudinary.uploader.upload(req.file.path, {
-        folder: "executives",
-      });
+      const result = await uploadToCloudinary(req.file.buffer, "executives");
 
       updateData.photo = result.secure_url;
     }
@@ -64,7 +56,7 @@ exports.updateExecutive = async (req, res) => {
     const executive = await Executive.findByIdAndUpdate(
       req.params.id,
       updateData,
-      { new: true }
+      { new: true },
     );
 
     res.json(executive);
@@ -72,7 +64,6 @@ exports.updateExecutive = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
 
 /* DELETE EXECUTIVE */
 

@@ -1,55 +1,62 @@
 // const mongoose = require("mongoose");
 
 // const locationSchema = new mongoose.Schema({
+//  userId: {
+//    type: String,
+//    required: true
+//  },
 
-//   userId: String,
+//  sessionId: {
+//    type: String,
+//    required: true,
+//    index: true
+//  },
 
-//   sessionId: String,
+//  latitude: {
+//    type: Number,
+//    required: true
+//  },
 
-//   latitude: Number,
+//  longitude: {
+//    type: Number,
+//    required: true
+//  },
 
-//   longitude: Number,
-
-//   timestamp: {
-//     type: Date,
-//     default: Date.now
-//   }
-
+//  timestamp: {
+//    type: Date,
+//    default: Date.now
+//  }
 // });
 
-// module.exports = mongoose.model("Location", locationSchema);
+// locationSchema.index({ sessionId: 1, timestamp: 1 });
 
+// module.exports = mongoose.model("Location", locationSchema)
 
 const mongoose = require("mongoose");
 
 const locationSchema = new mongoose.Schema({
- userId: {
-   type: String,
-   required: true
- },
 
- sessionId: {
-   type: String,
-   required: true,
-   index: true
- },
+  userId: {
+    type: String,
+    required: true
+  },
 
- latitude: {
-   type: Number,
-   required: true
- },
+  sessionId: {
+    type: String,
+    required: true,
+    index: true
+  },
 
- longitude: {
-   type: Number,
-   required: true
- },
+  latitude: Number,
+  longitude: Number,
 
- timestamp: {
-   type: Date,
-   default: Date.now
- }
+  timestamp: {
+    type: Date,
+    default: Date.now
+  }
+
 });
 
 locationSchema.index({ sessionId: 1, timestamp: 1 });
 
-module.exports = mongoose.model("Location", locationSchema)
+module.exports = mongoose.model("Location", locationSchema);
