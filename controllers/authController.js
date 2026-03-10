@@ -3,8 +3,10 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const Register = require("../models/Register");
 const admin = require("../config/firebaseAdmin");
-const transporter = require("../config/mailer");
+// const transporter = require("../config/mailer");
+const resend = require("../config/resend");
 
+// FORGOT PASSWORD
 exports.forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
@@ -25,6 +27,7 @@ exports.forgotPassword = async (req, res) => {
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    console.log("Generated OTP:", otp);
 
     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
@@ -33,26 +36,19 @@ exports.forgotPassword = async (req, res) => {
 
     await user.save();
 
-    console.log("Sending OTP email to:", email);
-
-    await transporter.sendMail({
-      from: `Radnus Distribution App <${process.env.EMAIL_USER}>`,
+    await resend.emails.send({
+      from: "Radnus App <onboarding@resend.dev>",
       to: email,
       subject: "Password Reset OTP",
       html: `
-    <h2>Password Reset</h2>
-    <p>Your OTP is:</p>
-    <h1 style="letter-spacing:5px">${otp}</h1>
-    <p>This OTP expires in 10 minutes.</p>
-  `,
+        <h2>Password Reset</h2>
+        <p>Your OTP is:</p>
+        <h1 style="letter-spacing:5px">${otp}</h1>
+        <p>This OTP expires in 10 minutes.</p>
+      `,
     });
 
     return res.json({
-      success: true,
-      message: "OTP sent to email",
-    });
-
-    res.json({
       success: true,
       message: "OTP sent to email",
     });
@@ -65,6 +61,63 @@ exports.forgotPassword = async (req, res) => {
   }
 };
 
+exports.verifyOtp = async (req, res) => {
+  try {
+    let { mobile, otp } = req.body;
+
+    if (!mobile || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: "Mobile and OTP are required",
+      });
+    }
+
+    mobile = mobile.toString().trim();
+    otp = otp.toString().trim();
+
+    const user = await Register.findOne({ mobile });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (!user.otp || user.otp !== otp) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP",
+      });
+    }
+
+    if (Date.now() > user.otpExpiry) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP expired",
+      });
+    }
+
+    user.isVerified = true;
+    user.otp = null;
+    user.otpExpiry = null;
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "OTP verified successfully",
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// VERIFY RESET OTP
 exports.verifyResetOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -93,40 +146,7 @@ exports.verifyResetOtp = async (req, res) => {
   }
 };
 
-// exports.resetPassword = async (req, res) => {
-//   try {
-//     const { email, otp, password } = req.body;
-
-//     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
-
-//     const user = await Register.findOne({
-//       email,
-//       resetOtp: hashedOtp,
-//       resetOtpExpiry: { $gt: Date.now() },
-//     });
-
-//     if (!user) {
-//       return res.status(400).json({
-//         message: "Invalid or expired OTP",
-//       });
-//     }
-
-//     user.password = password;
-
-//     user.resetOtp = undefined;
-//     user.resetOtpExpiry = undefined;
-
-//     await user.save();
-
-//     res.json({
-//       success: true,
-//       message: "Password reset successful",
-//     });
-//   } catch (err) {
-//     res.status(500).json({ message: err.message });
-//   }
-// };
-
+// RESET PASSWORD
 exports.resetPassword = async (req, res) => {
   try {
     const { email, otp, password } = req.body;
@@ -157,71 +177,12 @@ exports.resetPassword = async (req, res) => {
       success: true,
       message: "Password reset successful",
     });
-
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
-exports.verifyOtp = async (req, res) => {
-  try {
-    let { mobile, otp } = req.body;
-
-    if (!mobile || !otp) {
-      return res.status(200).json({
-        success: false,
-        message: "Mobile and OTP are required",
-      });
-    }
-
-    mobile = mobile.toString().trim();
-    otp = otp.toString().trim();
-
-    const user = await Register.findOne({ mobile });
-
-    if (!user) {
-      return res.status(200).json({
-        success: false,
-        message: "User not found",
-      });
-    }
-
-    //  SAFE expiry check
-    if (!user.otpExpiry || Number(user.otpExpiry) < Date.now()) {
-      return res.status(200).json({
-        success: false,
-        message: "OTP expired",
-      });
-    }
-
-    // SAFE OTP check
-    if (!user.otp || user.otp.toString().trim() !== otp) {
-      console.log("DB OTP:", user.otp, "REQ OTP:", otp);
-      return res.status(200).json({
-        success: false,
-        message: "Invalid OTP",
-      });
-    }
-
-    user.isVerified = true;
-    user.otp = null;
-    user.otpExpiry = null;
-
-    await user.save();
-
-    return res.status(200).json({
-      success: true,
-      message: "OTP verified successfully",
-    });
-  } catch (err) {
-    console.error("VERIFY OTP SERVER ERROR:", err);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
-  }
-};
-
+// RESEND OTP
 exports.resendOtp = async (req, res) => {
   try {
     const { mobile, email, type } = req.body;
@@ -291,8 +252,8 @@ exports.resendOtp = async (req, res) => {
 
       await user.save();
 
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
+      await resend.emails.send({
+        from: "Radnus App <onboarding@resend.dev>",
         to: email,
         subject: "Password Reset OTP",
         html: `<h2>Your OTP is</h2><h1>${otp}</h1>`,
