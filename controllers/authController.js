@@ -148,6 +148,41 @@ exports.verifyResetOtp = async (req, res) => {
 };
 
 // RESET PASSWORD
+// exports.resetPassword = async (req, res) => {
+//   try {
+//     const { email, otp, password } = req.body;
+
+//     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+
+//     const user = await Register.findOne({
+//       email,
+//       resetOtp: hashedOtp,
+//       resetOtpExpiry: { $gt: Date.now() },
+//     });
+
+//     if (!user) {
+//       return res.status(400).json({
+//         message: "Invalid or expired OTP",
+//       });
+//     }
+
+//     const hashedPassword = await bcrypt.hash(password, 10);
+
+//     user.password = hashedPassword;
+//     user.resetOtp = undefined;
+//     user.resetOtpExpiry = undefined;
+
+//     await user.save();
+
+//     res.json({
+//       success: true,
+//       message: "Password reset successful",
+//     });
+//   } catch (err) {
+//     res.status(500).json({ message: err.message });
+//   }
+// };
+
 exports.resetPassword = async (req, res) => {
   try {
     const { email, otp, password } = req.body;
@@ -166,9 +201,9 @@ exports.resetPassword = async (req, res) => {
       });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Don't hash manually if model already hashes
+    user.password = password;
 
-    user.password = hashedPassword;
     user.resetOtp = undefined;
     user.resetOtpExpiry = undefined;
 
