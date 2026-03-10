@@ -9,6 +9,8 @@ router.get("/today/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
 
+    console.log(`🔍 Checking for today's session - userId: ${userId}`);
+
     if (!userId) {
       return res.status(400).json({ message: "userId is required" });
     }
@@ -28,14 +30,19 @@ router.get("/today/:userId", async (req, res) => {
     });
 
     if (!session) {
+      console.log(`ℹ️ No active session found for today - userId: ${userId}`);
       return res.status(404).json({ message: "No active session today" });
     }
 
+    console.log(`✅ Found existing session - sessionId: ${session._id}`);
     res.json(session);
 
   } catch (err) {
-    console.log('❌ Error checking today session:', err);
-    res.status(500).json({ message: "Error checking session" });
+    console.log('❌ Error in /today/:userId:', err);
+    res.status(500).json({ 
+      message: "Error checking session",
+      error: err.message 
+    });
   }
 });
 
@@ -44,18 +51,51 @@ router.post("/start", async (req, res) => {
   try {
     const { userId, latitude, longitude } = req.body;
 
-    // ✅ VALIDATE INPUT
-    if (!userId) {
-      return res.status(400).json({ message: "userId is required" });
-    }
-    if (latitude === undefined || latitude === null) {
-      return res.status(400).json({ message: "latitude is required" });
-    }
-    if (longitude === undefined || longitude === null) {
-      return res.status(400).json({ message: "longitude is required" });
+    console.log(`📨 POST /api/session/start received`);
+    console.log(`   userId: ${userId} (type: ${typeof userId})`);
+    console.log(`   latitude: ${latitude} (type: ${typeof latitude})`);
+    console.log(`   longitude: ${longitude} (type: ${typeof longitude})`);
+
+    // ✅ VALIDATE USERID
+    if (!userId || userId.toString().trim() === '') {
+      console.log('❌ VALIDATION FAILED: userId is empty or null');
+      return res.status(400).json({ 
+        message: "userId is required",
+        received: { userId }
+      });
     }
 
-    console.log('📍 Start request received - userId:', userId, 'lat:', latitude, 'lng:', longitude);
+    // ✅ VALIDATE LATITUDE
+    if (latitude === undefined || latitude === null || latitude === '') {
+      console.log('❌ VALIDATION FAILED: latitude is missing');
+      return res.status(400).json({ 
+        message: "latitude is required",
+        received: { latitude }
+      });
+    }
+
+    // ✅ VALIDATE LONGITUDE
+    if (longitude === undefined || longitude === null || longitude === '') {
+      console.log('❌ VALIDATION FAILED: longitude is missing');
+      return res.status(400).json({ 
+        message: "longitude is required",
+        received: { longitude }
+      });
+    }
+
+    // ✅ CONVERT TO PROPER TYPES
+    const lat = parseFloat(latitude);
+    const lng = parseFloat(longitude);
+
+    if (isNaN(lat) || isNaN(lng)) {
+      console.log('❌ VALIDATION FAILED: latitude or longitude is not a number');
+      return res.status(400).json({ 
+        message: "latitude and longitude must be valid numbers",
+        received: { latitude, longitude }
+      });
+    }
+
+    console.log('✅ All validations passed');
 
     // ✅ Define today's date range
     const startOfDay = new Date();
@@ -63,6 +103,8 @@ router.post("/start", async (req, res) => {
 
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
+
+    console.log(`🔍 Checking for existing session for userId: ${userId}`);
 
     // ✅ Check if session already exists for today
     const existingSession = await Session.findOne({
@@ -72,21 +114,23 @@ router.post("/start", async (req, res) => {
     });
 
     if (existingSession) {
-      console.log('⚠️ Session already exists for today:', existingSession._id);
+      console.log(`⚠️ Session already exists for today - sessionId: ${existingSession._id}`);
       return res.json(existingSession);
     }
 
+    console.log(`📝 Creating new session with startLocation: [${lat}, ${lng}]`);
+
     // ✅ Create new session with start location
-    const session = await Session.create({
+    const session = new Session({
       userId,
       startLocation: {
-        latitude: parseFloat(latitude),
-        longitude: parseFloat(longitude)
+        latitude: lat,
+        longitude: lng
       },
       route: [
         {
-          latitude: parseFloat(latitude),
-          longitude: parseFloat(longitude),
+          latitude: lat,
+          longitude: lng,
           timestamp: new Date()
         }
       ],
@@ -94,12 +138,27 @@ router.post("/start", async (req, res) => {
       totalDistanceKm: 0
     });
 
-    console.log('✅ New session created:', session._id);
-    res.status(201).json(session);
+    const savedSession = await session.save();
+
+    console.log(`✅ Session created successfully:`);
+    console.log(`   sessionId: ${savedSession._id}`);
+    console.log(`   userId: ${savedSession.userId}`);
+    console.log(`   startTime: ${savedSession.startTime}`);
+    console.log(`   status: ${savedSession.status}`);
+
+    res.status(201).json(savedSession);
 
   } catch (err) {
-    console.log('❌ Error starting session:', err);
-    res.status(500).json({ message: "Error starting session", error: err.message });
+    console.log('❌ ERROR in /start endpoint:');
+    console.log(`   Message: ${err.message}`);
+    console.log(`   Name: ${err.name}`);
+    console.log(`   Stack: ${err.stack}`);
+
+    res.status(500).json({ 
+      message: "Error starting session",
+      error: err.message,
+      details: err.name === 'ValidationError' ? err.errors : null
+    });
   }
 });
 
@@ -108,11 +167,12 @@ router.post("/end", async (req, res) => {
   try {
     const { sessionId } = req.body;
 
+    console.log(`📨 POST /api/session/end - sessionId: ${sessionId}`);
+
     if (!sessionId) {
       return res.status(400).json({ message: "Session ID required" });
     }
 
-    // ✅ Update session to ENDED
     const session = await Session.findByIdAndUpdate(
       sessionId,
       {
@@ -123,15 +183,19 @@ router.post("/end", async (req, res) => {
     );
 
     if (!session) {
+      console.log(`❌ Session not found: ${sessionId}`);
       return res.status(404).json({ message: "Session not found" });
     }
 
-    console.log('✅ Session ended:', sessionId);
+    console.log(`✅ Session ended successfully - sessionId: ${sessionId}`);
     res.json(session);
 
   } catch (err) {
-    console.log('❌ Error ending session:', err);
-    res.status(500).json({ message: "Error ending session" });
+    console.log('❌ Error ending session:', err.message);
+    res.status(500).json({ 
+      message: "Error ending session",
+      error: err.message 
+    });
   }
 });
 
@@ -149,8 +213,11 @@ router.get("/:sessionId", async (req, res) => {
     res.json(session);
 
   } catch (err) {
-    console.log('❌ Error fetching session:', err);
-    res.status(500).json({ message: "Error fetching session" });
+    console.log('❌ Error fetching session:', err.message);
+    res.status(500).json({ 
+      message: "Error fetching session",
+      error: err.message 
+    });
   }
 });
 
