@@ -36,7 +36,7 @@ exports.forgotPassword = async (req, res) => {
 
     await user.save();
 
-    await resend.emails.send({
+    const response = await resend.emails.send({
       from: "onboarding@resend.dev",
       to: email,
       subject: "Password Reset OTP",
@@ -47,6 +47,8 @@ exports.forgotPassword = async (req, res) => {
     <p>This OTP expires in 10 minutes.</p>
   `,
     });
+
+    console.log("Resend response:", response);
 
     return res.json({
       success: true,
@@ -258,7 +260,7 @@ exports.resendOtp = async (req, res) => {
       //   html: `<h2>Your OTP is</h2><h1>${otp}</h1>`,
       // });
 
-      await resend.emails.send({
+      const response = await resend.emails.send({
         from: "onboarding@resend.dev",
         to: email,
         subject: "Password Reset OTP",
@@ -269,6 +271,8 @@ exports.resendOtp = async (req, res) => {
     <p>This OTP expires in 10 minutes.</p>
   `,
       });
+
+      console.log("Resend response:", response);
 
       return res.json({
         success: true,
