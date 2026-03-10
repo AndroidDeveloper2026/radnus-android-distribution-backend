@@ -37,15 +37,15 @@ exports.forgotPassword = async (req, res) => {
     await user.save();
 
     await resend.emails.send({
-      from: `Radnus Distribution App <${process.env.EMAIL_USER}>,`,
+      from: "onboarding@resend.dev",
       to: email,
       subject: "Password Reset OTP",
       html: `
-        <h2>Password Reset</h2>
-        <p>Your OTP is:</p>
-        <h1 style="letter-spacing:5px">${otp}</h1>
-        <p>This OTP expires in 10 minutes.</p>
-      `,
+    <h2>Password Reset</h2>
+    <p>Your OTP is:</p>
+    <h1>${otp}</h1>
+    <p>This OTP expires in 10 minutes.</p>
+  `,
     });
 
     return res.json({
@@ -108,7 +108,6 @@ exports.verifyOtp = async (req, res) => {
       success: true,
       message: "OTP verified successfully",
     });
-
   } catch (err) {
     res.status(500).json({
       success: false,
@@ -252,11 +251,23 @@ exports.resendOtp = async (req, res) => {
 
       await user.save();
 
+      // await resend.emails.send({
+      //   from: `"Radnus Distribution App"<${process.env.EMAIL_USER}>`,
+      //   to: email,
+      //   subject: "Password Reset OTP",
+      //   html: `<h2>Your OTP is</h2><h1>${otp}</h1>`,
+      // });
+
       await resend.emails.send({
-        from: `Radnus Distribution App <${process.env.EMAIL_USER}>,`,
+        from: "onboarding@resend.dev",
         to: email,
         subject: "Password Reset OTP",
-        html: `<h2>Your OTP is</h2><h1>${otp}</h1>`,
+        html: `
+    <h2>Password Reset</h2>
+    <p>Your OTP is:</p>
+    <h1>${otp}</h1>
+    <p>This OTP expires in 10 minutes.</p>
+  `,
       });
 
       return res.json({
