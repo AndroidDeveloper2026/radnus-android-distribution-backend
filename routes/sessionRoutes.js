@@ -9,6 +9,10 @@ router.get("/today/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
 
+    if (!userId) {
+      return res.status(400).json({ message: "userId is required" });
+    }
+
     // ✅ Define today's date range
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
@@ -40,9 +44,18 @@ router.post("/start", async (req, res) => {
   try {
     const { userId, latitude, longitude } = req.body;
 
-    if (!userId || !latitude || !longitude) {
-      return res.status(400).json({ message: "Missing required fields" });
+    // ✅ VALIDATE INPUT
+    if (!userId) {
+      return res.status(400).json({ message: "userId is required" });
     }
+    if (latitude === undefined || latitude === null) {
+      return res.status(400).json({ message: "latitude is required" });
+    }
+    if (longitude === undefined || longitude === null) {
+      return res.status(400).json({ message: "longitude is required" });
+    }
+
+    console.log('📍 Start request received - userId:', userId, 'lat:', latitude, 'lng:', longitude);
 
     // ✅ Define today's date range
     const startOfDay = new Date();
@@ -67,13 +80,13 @@ router.post("/start", async (req, res) => {
     const session = await Session.create({
       userId,
       startLocation: {
-        latitude,
-        longitude
+        latitude: parseFloat(latitude),
+        longitude: parseFloat(longitude)
       },
       route: [
         {
-          latitude,
-          longitude,
+          latitude: parseFloat(latitude),
+          longitude: parseFloat(longitude),
           timestamp: new Date()
         }
       ],
@@ -82,11 +95,11 @@ router.post("/start", async (req, res) => {
     });
 
     console.log('✅ New session created:', session._id);
-    res.json(session);
+    res.status(201).json(session);
 
   } catch (err) {
     console.log('❌ Error starting session:', err);
-    res.status(500).json({ message: "Error starting session" });
+    res.status(500).json({ message: "Error starting session", error: err.message });
   }
 });
 
