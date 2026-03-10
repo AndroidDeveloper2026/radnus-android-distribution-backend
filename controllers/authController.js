@@ -37,7 +37,7 @@ exports.forgotPassword = async (req, res) => {
     await user.save();
 
     await resend.emails.send({
-      from: "Radnus App <onboarding@resend.dev>",
+      from: `Radnus Distribution App <${process.env.EMAIL_USER}>,`,
       to: email,
       subject: "Password Reset OTP",
       html: `
@@ -253,7 +253,7 @@ exports.resendOtp = async (req, res) => {
       await user.save();
 
       await resend.emails.send({
-        from: "Radnus App <onboarding@resend.dev>",
+        from: `Radnus Distribution App <${process.env.EMAIL_USER}>,`,
         to: email,
         subject: "Password Reset OTP",
         html: `<h2>Your OTP is</h2><h1>${otp}</h1>`,
