@@ -12,6 +12,7 @@ const registerSchema = new mongoose.Schema(
         "Retailer",
         "MarketingManager",
         "MarketingExecutive",
+        "Radnus"
       ],
     },
 

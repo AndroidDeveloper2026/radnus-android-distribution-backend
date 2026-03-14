@@ -27,7 +27,7 @@ exports.forgotPassword = async (req, res) => {
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    console.log("Generated OTP:", otp);
+
 
     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
@@ -48,7 +48,7 @@ exports.forgotPassword = async (req, res) => {
   `,
     });
 
-    console.log("Resend response:", response);
+
 
     return res.json({
       success: true,
@@ -307,7 +307,7 @@ exports.resendOtp = async (req, res) => {
   `,
       });
 
-      console.log("Resend response:", response);
+
 
       return res.json({
         success: true,
@@ -322,7 +322,7 @@ exports.resendOtp = async (req, res) => {
 
 //register
 exports.register = async (req, res) => {
-  console.log("--- req body --->", req.body);
+
   try {
     const {
       role,
@@ -404,7 +404,7 @@ exports.register = async (req, res) => {
 };
 
 exports.login = async (req, res) => {
-  // console.log('--- LOGIN BODY:----', req.body);
+
 
   const { email, password } = req.body;
 
@@ -415,11 +415,10 @@ exports.login = async (req, res) => {
       return res.status(400).json({ msg: "Invalid credentials" });
     }
 
-    console.log("Entered:", password);
-    console.log("Stored:", user.password);
+
 
     const isMatch = await bcrypt.compare(password, user.password);
-    console.log("Match:", isMatch);
+
 
     if (!isMatch) {
       return res.status(400).json({ msg: "Invalid credentials" });
