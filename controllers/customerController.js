@@ -1,4 +1,4 @@
-const Customer = require('../models/Customer/CustomerModel');
+const Customer = require('../models/Customer');
 
 // GET /api/customers/:phone
 const getCustomerByPhone = async (req, res) => {
@@ -17,13 +17,10 @@ const getCustomerByPhone = async (req, res) => {
 const addCustomer = async (req, res) => {
   try {
     const { phone, name, address, city, state } = req.body;
-
-    // Check duplicate
     const existing = await Customer.findOne({ phone });
     if (existing) {
       return res.status(400).json({ success: false, message: 'Customer already exists' });
     }
-
     const customer = await Customer.create({ phone, name, address, city, state });
     res.status(201).json({ success: true, customer });
   } catch (err) {
@@ -31,7 +28,7 @@ const addCustomer = async (req, res) => {
   }
 };
 
-// PUT /api/customers/:phone  (update existing)
+// PUT /api/customers/:phone
 const updateCustomer = async (req, res) => {
   try {
     const customer = await Customer.findOneAndUpdate(
