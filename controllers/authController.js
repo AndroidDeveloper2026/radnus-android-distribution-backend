@@ -23,11 +23,10 @@ exports.forgotPassword = async (req, res) => {
       return res.json({
         success: true,
         message: "If email exists, OTP sent",
-      }); 
+      });
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
 
     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
@@ -47,8 +46,6 @@ exports.forgotPassword = async (req, res) => {
     <p>This OTP expires in 10 minutes.</p>
   `,
     });
-
-
 
     return res.json({
       success: true,
@@ -307,8 +304,6 @@ exports.resendOtp = async (req, res) => {
   `,
       });
 
-
-
       return res.json({
         success: true,
         message: "OTP resent successfully",
@@ -322,7 +317,6 @@ exports.resendOtp = async (req, res) => {
 
 //register
 exports.register = async (req, res) => {
-
   try {
     const {
       role,
@@ -403,9 +397,43 @@ exports.register = async (req, res) => {
   }
 };
 
+// In your auth controller
+exports.adminLogin = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Check against .env credentials
+    if (email !== process.env.ADMIN_EMAIL) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    // Compare password with hashed password from .env
+    const isMatch = await bcrypt.compare(
+      password,
+      process.env.ADMIN_PASSWORD_HASH,
+    );
+
+    if (!isMatch) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    const token = jwt.sign({ role: "Admin", email }, process.env.JWT_SECRET, {
+      expiresIn: "1d",
+    });
+
+    res.json({
+      token,
+      admin: {
+        email,
+        role: "Admin",
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 exports.login = async (req, res) => {
-
-
   const { email, password } = req.body;
 
   try {
@@ -415,10 +443,7 @@ exports.login = async (req, res) => {
       return res.status(400).json({ msg: "Invalid credentials" });
     }
 
-
-
     const isMatch = await bcrypt.compare(password, user.password);
-
 
     if (!isMatch) {
       return res.status(400).json({ msg: "Invalid credentials" });

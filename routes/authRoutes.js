@@ -43,6 +43,8 @@ router.post("/resend-otp", authController.resendOtp);
 router.post("/forgot-password", authController.forgotPassword);
 router.post("/verify-reset-otp", authController.verifyResetOtp);
 router.post("/reset-password", authController.resetPassword);
+// In your auth routes file
+router.post('/admin', authController.adminLogin); // → /api/auth/admin
 
 // PROTECTED ROUTE
 router.get("/profile", auth, (req, res) => {
