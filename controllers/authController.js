@@ -23,7 +23,7 @@ exports.forgotPassword = async (req, res) => {
       return res.json({
         success: true,
         message: "If email exists, OTP sent",
-      });
+      }); 
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
