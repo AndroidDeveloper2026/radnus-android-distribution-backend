@@ -397,38 +397,86 @@ exports.register = async (req, res) => {
   }
 };
 
-// In your auth controller
+// // In your auth controller
+// exports.adminLogin = async (req, res) => {
+//   try {
+//     const { email, password } = req.body;
+
+//     // Check against .env credentials
+//     if (email !== process.env.ADMIN_EMAIL) {
+//       return res.status(400).json({ message: "Invalid credentials" });
+//     }
+
+//     // Compare password with hashed password from .env
+//     const isMatch = await bcrypt.compare(
+//       password,
+//       process.env.ADMIN_PASSWORD_HASH,
+//     );
+
+//     if (!isMatch) {
+//       return res.status(400).json({ message: "Invalid credentials" });
+//     }
+
+//     const token = jwt.sign({ role: "Admin", email }, process.env.JWT_SECRET, {
+//       expiresIn: "1d",
+//     });
+
+//     res.json({
+//       token,
+//       admin: {
+//         email,
+//         role: "Admin",
+//       },
+//     });
+//   } catch (err) {
+//     res.status(500).json({ message: err.message });
+//   }
+// };
+
 exports.adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Check against .env credentials
+    // DEBUG LOGS
+    console.log("📧 Received email:", email);
+    console.log("🔑 Received password:", password);
+    console.log("✅ ENV email:", process.env.ADMIN_EMAIL);
+    console.log("✅ ENV hash:", process.env.ADMIN_PASSWORD_HASH);
+
+    // Guard: check .env values exist
+    if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD_HASH) {
+      console.log("❌ ENV credentials missing");
+      return res.status(500).json({ message: "Admin credentials not configured" });
+    }
+
     if (email !== process.env.ADMIN_EMAIL) {
+      console.log("❌ Email mismatch");
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
-    // Compare password with hashed password from .env
-    const isMatch = await bcrypt.compare(
-      password,
-      process.env.ADMIN_PASSWORD_HASH,
-    );
+    const isMatch = await bcrypt.compare(password, process.env.ADMIN_PASSWORD_HASH);
+    console.log("🔐 Password match:", isMatch);
 
     if (!isMatch) {
+      console.log("❌ Password wrong");
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
-    const token = jwt.sign({ role: "Admin", email }, process.env.JWT_SECRET, {
-      expiresIn: "1d",
-    });
+    const token = jwt.sign(
+      { role: "Admin", email },
+      process.env.JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+
+    console.log("✅ Admin login success");
 
     res.json({
       token,
-      admin: {
-        email,
-        role: "Admin",
-      },
+      admin: { email, role: "Admin" },
     });
+
   } catch (err) {
+    console.log("💥 Error:", err.message);
     res.status(500).json({ message: err.message });
   }
 };
