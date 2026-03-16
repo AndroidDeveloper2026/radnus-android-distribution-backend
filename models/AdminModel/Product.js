@@ -9,6 +9,7 @@ const productSchema = new mongoose.Schema(
     mrp: { type: Number, required: true },
     distributorPrice: { type: Number, required: true },
     retailerPrice: { type: Number, required: true },
+    itemCost: { type: Number, required: true },
 
     gst: { type: Number, default: 0 },
     moq: { type: Number, default: 1 },
