@@ -4,6 +4,28 @@ const Session = require("../models/FSEModel/Session");
 const Location = require("../models/LocationModel/Location");
 const calculateDistance = require("../utils/distance");
 
+// ✅ GET ALL SESSIONS (FIX THIS ISSUE)
+router.get("/", async (req, res) => {
+  try {
+    console.log("📥 GET /api/session called");
+
+    const sessions = await Session.find()
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      sessions
+    });
+
+  } catch (err) {
+    console.log("❌ Error fetching sessions:", err.message);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
 // ✅ CHECK TODAY'S SESSION
 router.get("/today/:userId", async (req, res) => {
   try {
@@ -45,6 +67,7 @@ router.get("/today/:userId", async (req, res) => {
     });
   }
 });
+
 
 // ✅ START NEW SESSION
 router.post("/start", async (req, res) => {
