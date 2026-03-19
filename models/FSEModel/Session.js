@@ -13,7 +13,7 @@ const sessionSchema = new mongoose.Schema({
     longitude: Number
   },
 
-  // ✅ Store all GPS coordinates for the route
+  // Store all GPS coordinates for the route
   route: [
     {
       latitude: Number,
@@ -25,23 +25,23 @@ const sessionSchema = new mongoose.Schema({
     }
   ],
 
-  // ✅ Total distance traveled in kilometers
+  // Total distance traveled in kilometers
   totalDistanceKm: {
     type: Number,
     default: 0
   },
 
-  // ✅ Session start time
+  // Session start time
   startTime: {
     type: Date,
     default: Date.now,
     index: true
   },
 
-  // ✅ Session end time
+  // Session end time
   endTime: Date,
 
-  // ✅ Session status
+  // Session status
   status: {
     type: String,
     enum: ["ACTIVE", "ENDED", "AUTO_ENDED"],
@@ -49,7 +49,7 @@ const sessionSchema = new mongoose.Schema({
     index: true
   },
 
-  // ✅ Additional metadata
+  // Additional metadata
   metadata: {
     deviceInfo: String,
     appVersion: String,
