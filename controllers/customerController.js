@@ -79,9 +79,22 @@ const updateCustomer = async (req, res) => {
   }
 };
 
+const deleteCustomer = async (req, res) => {
+  try {
+    const customer = await Customer.findOneAndDelete({ phone: req.params.phone });
+    if (!customer) {
+      return res.status(404).json({ success: false, message: "Customer not found" });
+    }
+    res.status(200).json({ success: true, message: "Customer deleted" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getCustomerByPhone,
   addCustomer,
   updateCustomer,
   getAllCustomers,
+  deleteCustomer
 };
