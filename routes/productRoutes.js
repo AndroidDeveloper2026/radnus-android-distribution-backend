@@ -12,7 +12,7 @@ router.post(
 router.get("/", controller.getProducts);
 router.put("/:id", upload.single("image"), controller.updateProduct);
 router.delete("/:id", controller.deleteProduct);
-
+router.post("/reduce-stock", controller.reduceStock);
 // bulk upload
 router.post(
   "/bulk-upload",
