@@ -7,9 +7,6 @@ const InvoiceSchema = new mongoose.Schema(
     financialYear: { type: String, required: true },
     sequence: { type: Number, required: true },
 
-    // customerPhone: { type: String, required: true },
-
-    // 🔥 NEW FIELD
     billerName: { type: String, required: true },
 
     items: [

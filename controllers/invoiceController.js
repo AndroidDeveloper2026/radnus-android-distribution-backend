@@ -17,14 +17,23 @@ const createInvoice = async (req, res) => {
       items,
       totalAmount,
       paymentMode,
-      billerName, // ✅ REQUIRED
+      billerName,
     } = req.body;
 
-    // ❌ Validation
+    // 🔴 DEBUG LOG
+    console.log("BODY:", req.body);
+
     if (!billerName) {
       return res.status(400).json({
         success: false,
-        message: "Biller name is required",
+        message: "billerName is required",
+      });
+    }
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Items are required",
       });
     }
 
@@ -43,9 +52,7 @@ const createInvoice = async (req, res) => {
       invoiceNumber,
       financialYear,
       sequence: nextSequence,
-
-      billerName, // ✅ MAIN FIELD
-
+      billerName,
       items,
       totalAmount,
       paymentMode,
@@ -57,6 +64,7 @@ const createInvoice = async (req, res) => {
     });
 
   } catch (err) {
+    console.log("❌ ERROR:", err); // 🔥 VERY IMPORTANT
     res.status(500).json({
       success: false,
       message: err.message,
