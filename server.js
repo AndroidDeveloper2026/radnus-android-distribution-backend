@@ -60,7 +60,7 @@ app.use("/api/location", require("./routes/locationRoutes"));
 app.use("/api/executives", require("./routes/executiveRoutes"));
 app.use("/api/managers", require("./routes/managerRoutes"));
 app.use("/api/customers",   require("./routes/customerRoutes"));
-
+app.use("/api/invoices", require("./routes/invoiceRoutes"));
 console.log("✅ All routes registered");
 
 // ✅ CREATE HTTP SERVER & ATTACH SOCKET.IO
