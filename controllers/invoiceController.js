@@ -1,14 +1,17 @@
 const Invoice = require("../models/Invoice/InvoiceModel");
 
-// 🔥 helper: financial year
 const getFinancialYear = () => {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
 
-  return month >= 4
-    ? `${year}-${year + 1}`
-    : `${year - 1}-${year}`;
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1; // Jan = 1
+
+  // Financial year starts in April
+  if (month >= 4) {
+    return `${year}-${year + 1}`;
+  } else {
+    return `${year - 1}-${year}`;
+  }
 };
 
 const createInvoice = async (req, res) => {
