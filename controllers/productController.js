@@ -96,6 +96,25 @@ exports.deleteProduct = async (req, res) => {
   res.json({ message: "Product deleted" });
 };
 
+// exports.reduceStock = async (req, res) => {
+//   const { items } = req.body;
+
+//   try {
+//     const bulkOps = items.map((item) => ({
+//       updateOne: {
+//         filter: { _id: item.productId },
+//         update: { $inc: { moq: -item.qty } }, // ✅ reduce moq by ordered qty
+//       },
+//     }));
+
+//     await Product.bulkWrite(bulkOps);
+//     res.json({ message: 'Stock updated successfully' });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// };
+
+// ✅ CORRECT - decrement 'stock' instead
 exports.reduceStock = async (req, res) => {
   const { items } = req.body;
 
@@ -103,7 +122,7 @@ exports.reduceStock = async (req, res) => {
     const bulkOps = items.map((item) => ({
       updateOne: {
         filter: { _id: item.productId },
-        update: { $inc: { moq: -item.qty } }, // ✅ reduce moq by ordered qty
+        update: { $inc: { stock: -item.qty } }, // ✅ reduce stock, NOT moq
       },
     }));
 
