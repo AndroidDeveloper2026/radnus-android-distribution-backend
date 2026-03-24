@@ -14,12 +14,19 @@ const getFinancialYear = () => {
 const createInvoice = async (req, res) => {
   try {
     const {
-      customerPhone,
       items,
       totalAmount,
       paymentMode,
-      billerName, // 🔥 NEW
+      billerName, // ✅ REQUIRED
     } = req.body;
+
+    // ❌ Validation
+    if (!billerName) {
+      return res.status(400).json({
+        success: false,
+        message: "Biller name is required",
+      });
+    }
 
     const financialYear = getFinancialYear();
 
@@ -36,8 +43,9 @@ const createInvoice = async (req, res) => {
       invoiceNumber,
       financialYear,
       sequence: nextSequence,
-      customerPhone,
-      billerName, // 🔥 SAVE HERE
+
+      billerName, // ✅ MAIN FIELD
+
       items,
       totalAmount,
       paymentMode,
@@ -49,7 +57,10 @@ const createInvoice = async (req, res) => {
     });
 
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
 
