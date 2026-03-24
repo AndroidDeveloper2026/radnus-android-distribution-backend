@@ -16,6 +16,7 @@ const productSchema = new mongoose.Schema(
 
     image: { type: String }, 
     status: { type: String, default: "Active" },
+    walkinPrice: { type: Number, required: true },
   },
   { timestamps: true }
 );
