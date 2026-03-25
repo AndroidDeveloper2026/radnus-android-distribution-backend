@@ -27,8 +27,9 @@ const retailerSchema = new mongoose.Schema(
     ownerName: String,
     mobile: String,
 
-    area: String,   
-    gst: String,    
+    area: String,
+    address: String, // ✅ NEW
+    gst: String,
 
     shopPhoto: String,
 
