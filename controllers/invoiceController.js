@@ -75,4 +75,43 @@ const createInvoice = async (req, res) => {
   }
 };
 
-module.exports = { createInvoice };
+// ================= GET WITH FILTER =================
+const getInvoices = async (req, res) => {
+  try {
+    const { filter } = req.query;
+
+    let query = {};
+    const now = new Date();
+
+    if (filter === "today") {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+
+      query.createdAt = { $gte: start };
+    }
+
+    if (filter === "week") {
+      const start = new Date();
+      start.setDate(now.getDate() - 7);
+
+      query.createdAt = { $gte: start };
+    }
+
+    if (filter === "month") {
+      const start = new Date();
+      start.setMonth(now.getMonth() - 1);
+
+      query.createdAt = { $gte: start };
+    }
+
+    const invoices = await Invoice.find(query)
+      .sort({ createdAt: -1 });
+
+    res.json(invoices);
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+module.exports = { createInvoice, getInvoices};
