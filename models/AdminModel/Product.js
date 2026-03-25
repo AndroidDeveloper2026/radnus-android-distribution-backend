@@ -14,11 +14,13 @@ const productSchema = new mongoose.Schema(
     gst: { type: Number, default: 0 },
     moq: { type: Number, default: 1 },
 
-    image: { type: String }, 
+    image: { type: String },
     status: { type: String, default: "Active" },
     walkinPrice: { type: Number, required: true },
+    batchNo: { type: String, default: "" }, // ✅ NEW
+    rackNo: { type: String, default: "" }, // ✅ NEW
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 module.exports = mongoose.model("Product", productSchema);
