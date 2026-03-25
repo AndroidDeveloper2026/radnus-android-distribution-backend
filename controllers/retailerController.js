@@ -2,7 +2,6 @@ const Retailer = require("../models/RetailerModel/Retailer");
 const cloudinary = require("../config/cloudinary");
 const streamifier = require("streamifier");
 
-
 exports.createRetailer = async (req, res) => {
   try {
     let imageUrl = "";
@@ -15,12 +14,10 @@ exports.createRetailer = async (req, res) => {
             (error, result) => {
               if (result) resolve(result);
               else reject(error);
-            }
+            },
           );
 
-          streamifier
-            .createReadStream(req.file.buffer)
-            .pipe(stream);
+          streamifier.createReadStream(req.file.buffer).pipe(stream);
         });
       };
 
@@ -33,7 +30,10 @@ exports.createRetailer = async (req, res) => {
       ownerName: req.body.ownerName,
       mobile: req.body.mobile,
       gps: req.body.gps,
-      shopPhoto: imageUrl, // ✅ store cloudinary URL
+      area: req.body.area, 
+      address: req.body.address, 
+      gst: req.body.gst, 
+      shopPhoto: imageUrl, 
     });
 
     res.json(retailer);
