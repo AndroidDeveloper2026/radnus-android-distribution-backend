@@ -61,6 +61,7 @@ app.use("/api/executives", require("./routes/executiveRoutes"));
 app.use("/api/managers", require("./routes/managerRoutes"));
 app.use("/api/customers",   require("./routes/customerRoutes"));
 app.use("/api/invoices", require("./routes/invoiceRoutes"));
+app.use('/api/feedback', require("./routes/feedbackroutes"));
 console.log("✅ All routes registered");
 
 // ✅ CREATE HTTP SERVER & ATTACH SOCKET.IO
