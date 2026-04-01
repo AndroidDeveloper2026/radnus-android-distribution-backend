@@ -27,7 +27,7 @@
 
 const express = require("express");
 const router = express.Router();
-
+const jwt = require("jsonwebtoken");
 const authController = require("../controllers/authController");
 const auth = require("../middleware/authMiddleware");
 
@@ -54,30 +54,7 @@ router.get("/profile", auth, (req, res) => {
   });
 });
 
-router.post("/refresh", async (req, res) => {
- const { refreshToken } = req.body;
-
- if (!refreshToken) {
-   return res.status(401).json({ message: "No refresh token" });
- }
-
- try {
-   const decoded = jwt.verify(refreshToken, process.env.REFRESH_SECRET);
-
-   const user = await User.findById(decoded.id);
-
-   const newAccessToken = jwt.sign(
-     { id: user._id, role: user.role },
-     process.env.ACCESS_SECRET,
-     { expiresIn: "15m" }
-   );
-
-   res.json({ accessToken: newAccessToken });
-
- } catch (err) {
-   res.status(403).json({ message: "Invalid refresh token" });
- }
-});
+router.post("/refresh", authController.refreshToken);
 
 
 module.exports = router;

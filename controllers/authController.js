@@ -517,6 +517,39 @@ exports.adminLogin = async (req, res) => {
 //   }
 // };
 
+exports.refreshToken = async (req, res) => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken) {
+    return res.status(401).json({ message: "No refresh token" });
+  }
+
+  try {
+    const decoded = jwt.verify(
+      refreshToken,
+      process.env.REFRESH_SECRET
+    );
+
+    const user = await Register.findById(decoded.id);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const newAccessToken = jwt.sign(
+      { id: user._id, role: user.role },
+      process.env.ACCESS_SECRET,
+      { expiresIn: "15m" }
+    );
+
+    res.json({ accessToken: newAccessToken });
+
+  } catch (err) {
+    console.log("Refresh error:", err.message);
+    res.status(403).json({ message: "Invalid refresh token" });
+  }
+};
+
 //-------------- original -----------------
 // exports.login = async (req, res) => {
 //   const { email, password, role } = req.body;   // ✅ destructure role
@@ -555,6 +588,7 @@ exports.adminLogin = async (req, res) => {
 
 exports.login = async (req, res) => {
  try {
+   console.log("ACCESS_SECRET:", process.env.ACCESS_SECRET);
    const user = await Register.findOne({ email: req.body.email });
 
    if (!user) return res.status(400).json({ message: "User not found" });

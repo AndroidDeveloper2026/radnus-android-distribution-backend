@@ -1,8 +1,10 @@
-const dotenv = require("dotenv");
-dotenv.config({
+// const dotenv = require("dotenv");
+// dotenv.config({
+//   path: `.env.${process.env.NODE_ENV || "dev"}`,
+// });
+require("dotenv").config({
   path: `.env.${process.env.NODE_ENV || "dev"}`,
 });
-
 const express = require("express");
 const connectDB = require("./config/db");
 const http = require("http");
