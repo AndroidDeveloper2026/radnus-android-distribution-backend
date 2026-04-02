@@ -56,5 +56,23 @@ router.get("/profile", auth, (req, res) => {
 
 router.post("/refresh", authController.refreshToken);
 
+router.get('/me', auth, async (req, res) => {
+  try {
+    const user = await Register.findById(req.user.id).select('-password');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json({ user });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// // GET /api/auth/validate - Simple token validation
+// router.get('/validate', authMiddleware, (req, res) => {
+//   // If we reach here, token is valid
+//   res.json({ valid: true, userId: req.user.id });
+// });
+
 
 module.exports = router;
