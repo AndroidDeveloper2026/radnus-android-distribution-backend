@@ -587,28 +587,36 @@ exports.refreshToken = async (req, res) => {
 // };
 
 exports.login = async (req, res) => {
- try {
-   console.log("ACCESS_SECRET:", process.env.ACCESS_SECRET);
-   const user = await Register.findOne({ email: req.body.email });
+  try {
+    const { email, password, role } = req.body;   // ✅ ADD THIS
 
-   if (!user) return res.status(400).json({ message: "User not found" });
+    const user = await Register.findOne({ email });
 
-   const isMatch = await bcrypt.compare(req.body.password, user.password);
+    if (!user) {
+      return res.status(400).json({ message: "User not found" });
+    }
 
-   if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
+    const isMatch = await bcrypt.compare(password, user.password);
 
-   const accessToken = generateAccessToken(user);
-   const refreshToken = generateRefreshToken(user);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
 
-   res.json({
-     accessToken,
-     refreshToken,
-     user,
-   });
+    // ✅ ADD ROLE CHECK BACK
+    if (user.role !== role) {
+      return res.status(403).json({ message: "Invalid role selected" });
+    }
 
- } catch (err) {
-   res.status(500).json({ message: err.message });
- }
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+
+    res.json({
+      accessToken,
+      refreshToken,
+      user,
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
-
-
