@@ -145,41 +145,7 @@ exports.verifyResetOtp = async (req, res) => {
   }
 };
 
-// RESET PASSWORD
-// exports.resetPassword = async (req, res) => {
-//   try {
-//     const { email, otp, password } = req.body;
 
-//     const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
-
-//     const user = await Register.findOne({
-//       email,
-//       resetOtp: hashedOtp,
-//       resetOtpExpiry: { $gt: Date.now() },
-//     });
-
-//     if (!user) {
-//       return res.status(400).json({
-//         message: "Invalid or expired OTP",
-//       });
-//     }
-
-//     const hashedPassword = await bcrypt.hash(password, 10);
-
-//     user.password = hashedPassword;
-//     user.resetOtp = undefined;
-//     user.resetOtpExpiry = undefined;
-
-//     await user.save();
-
-//     res.json({
-//       success: true,
-//       message: "Password reset successful",
-//     });
-//   } catch (err) {
-//     res.status(500).json({ message: err.message });
-//   }
-// };
 
 exports.resetPassword = async (req, res) => {
   try {
@@ -398,38 +364,51 @@ exports.register = async (req, res) => {
   }
 };
 
-// // In your auth controller
+
 // exports.adminLogin = async (req, res) => {
 //   try {
 //     const { email, password } = req.body;
 
-//     // Check against .env credentials
+//     // DEBUG LOGS
+//     console.log("📧 Received email:", email);
+//     console.log("🔑 Received password:", password);
+//     console.log("✅ ENV email:", process.env.ADMIN_EMAIL);
+//     console.log("✅ ENV hash:", process.env.ADMIN_PASSWORD_HASH);
+
+//     // Guard: check .env values exist
+//     if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD_HASH) {
+//       console.log("❌ ENV credentials missing");
+//       return res.status(500).json({ message: "Admin credentials not configured" });
+//     }
+
 //     if (email !== process.env.ADMIN_EMAIL) {
+//       console.log("❌ Email mismatch");
 //       return res.status(400).json({ message: "Invalid credentials" });
 //     }
 
-//     // Compare password with hashed password from .env
-//     const isMatch = await bcrypt.compare(
-//       password,
-//       process.env.ADMIN_PASSWORD_HASH,
-//     );
+//     const isMatch = await bcrypt.compare(password, process.env.ADMIN_PASSWORD_HASH);
+//     console.log("🔐 Password match:", isMatch);
 
 //     if (!isMatch) {
+//       console.log("❌ Password wrong");
 //       return res.status(400).json({ message: "Invalid credentials" });
 //     }
 
-//     const token = jwt.sign({ role: "Admin", email }, process.env.JWT_SECRET, {
-//       expiresIn: "1d",
-//     });
+//     const token = jwt.sign(
+//       { role: "Admin", email },
+//       process.env.JWT_SECRET,
+//       { expiresIn: "1d" }
+//     );
+
+//     console.log("✅ Admin login success");
 
 //     res.json({
 //       token,
-//       admin: {
-//         email,
-//         role: "Admin",
-//       },
+//       admin: { email, role: "Admin" },
 //     });
+
 //   } catch (err) {
+//     console.log("💥 Error:", err.message);
 //     res.status(500).json({ message: err.message });
 //   }
 // };
@@ -438,84 +417,43 @@ exports.adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // DEBUG LOGS
-    console.log("📧 Received email:", email);
-    console.log("🔑 Received password:", password);
-    console.log("✅ ENV email:", process.env.ADMIN_EMAIL);
-    console.log("✅ ENV hash:", process.env.ADMIN_PASSWORD_HASH);
-
-    // Guard: check .env values exist
-    if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD_HASH) {
-      console.log("❌ ENV credentials missing");
-      return res.status(500).json({ message: "Admin credentials not configured" });
-    }
-
+    // Validate credentials against .env
     if (email !== process.env.ADMIN_EMAIL) {
-      console.log("❌ Email mismatch");
-      return res.status(400).json({ message: "Invalid credentials" });
+      return res.status(401).json({ message: "Invalid credentials" });
     }
 
     const isMatch = await bcrypt.compare(password, process.env.ADMIN_PASSWORD_HASH);
-    console.log("🔐 Password match:", isMatch);
-
     if (!isMatch) {
-      console.log("❌ Password wrong");
-      return res.status(400).json({ message: "Invalid credentials" });
+      return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    const token = jwt.sign(
-      { role: "Admin", email },
-      process.env.JWT_SECRET,
-      { expiresIn: "1d" }
+    // Generate tokens
+    const accessToken = jwt.sign(
+      { email, role: "Admin" },
+      process.env.ACCESS_SECRET,
+      { expiresIn: "15m" }
+    );
+    
+    const refreshToken = jwt.sign(
+      { email, role: "Admin" },
+      process.env.REFRESH_SECRET,
+      { expiresIn: "7d" }
     );
 
-    console.log("✅ Admin login success");
-
+    // ✅ RETURN SAME STRUCTURE AS USER LOGIN
     res.json({
-      token,
-      admin: { email, role: "Admin" },
+      accessToken,     // ← Changed from 'token' to 'accessToken'
+      refreshToken,    // ← Added refresh token
+      user: {          // ← Changed from 'admin' to 'user' for consistency
+        email,
+        role: "Admin"
+      }
     });
 
   } catch (err) {
-    console.log("💥 Error:", err.message);
     res.status(500).json({ message: err.message });
   }
 };
-
-// exports.login = async (req, res) => {
-//   const { email, password } = req.body;
-
-//   try {
-//     const user = await Register.findOne({ email });
-
-//     if (!user) {
-//       return res.status(400).json({ msg: "Invalid credentials" });
-//     }
-
-//     const isMatch = await bcrypt.compare(password, user.password);
-
-//     if (!isMatch) {
-//       return res.status(400).json({ msg: "Invalid credentials" });
-//     }
-
-//     const token = jwt.sign(
-//       { id: user._id, role: user.role },
-//       process.env.JWT_SECRET,
-//       { expiresIn: "1d" },
-//     );
-
-//     res.json({
-//       token,
-//       user: {
-//         id: user._id,
-//         name: user.name,
-//         role: user.role,
-//       },
-//     });
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// };
 
 exports.refreshToken = async (req, res) => {
   const { refreshToken } = req.body;
@@ -550,41 +488,7 @@ exports.refreshToken = async (req, res) => {
   }
 };
 
-//-------------- original -----------------
-// exports.login = async (req, res) => {
-//   const { email, password, role } = req.body;   // ✅ destructure role
 
-//   try {
-//     const user = await Register.findOne({ email });
-
-//     if (!user) {
-//       return res.status(400).json({ msg: "Invalid credentials" });
-//     }
-
-//     const isMatch = await bcrypt.compare(password, user.password);
-//     if (!isMatch) {
-//       return res.status(400).json({ msg: "Invalid credentials" });
-//     }
-
-//     // ✅ Check if the selected role matches the user's actual role in DB
-//     if (user.role !== role) {
-//       return res.status(403).json({ msg: "Invalid role selected" });
-//     }
-
-//     const token = jwt.sign(
-//       { id: user._id, role: user.role },
-//       process.env.JWT_SECRET,
-//       { expiresIn: "1d" },
-//     );
-
-//     res.json({
-//       token,
-//       user: { id: user._id, name: user.name, role: user.role },
-//     });
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// };
 
 exports.login = async (req, res) => {
   try {
