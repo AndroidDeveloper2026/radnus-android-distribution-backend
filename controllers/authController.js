@@ -413,11 +413,54 @@ exports.register = async (req, res) => {
 //   }
 // };
 
+//----------------------- old ---------------------------
+// exports.adminLogin = async (req, res) => {
+//   try {
+//     const { email, password } = req.body;
+
+//     // Validate credentials against .env
+//     if (email !== process.env.ADMIN_EMAIL) {
+//       return res.status(401).json({ message: "Invalid credentials" });
+//     }
+
+//     const isMatch = await bcrypt.compare(password, process.env.ADMIN_PASSWORD_HASH);
+//     if (!isMatch) {
+//       return res.status(401).json({ message: "Invalid credentials" });
+//     }
+
+//     // Generate tokens
+//     const accessToken = jwt.sign(
+//       { email, role: "Admin" },
+//       process.env.ACCESS_SECRET,
+//       { expiresIn: "15m" }
+//     );
+    
+//     const refreshToken = jwt.sign(
+//       { email, role: "Admin" },
+//       process.env.REFRESH_SECRET,
+//       { expiresIn: "7d" }
+//     );
+
+//     // ✅ RETURN SAME STRUCTURE AS USER LOGIN
+//     res.json({
+//       accessToken,     // ← Changed from 'token' to 'accessToken'
+//       refreshToken,    // ← Added refresh token
+//       user: {          // ← Changed from 'admin' to 'user' for consistency
+//         email,
+//         role: "Admin"
+//       }
+//     });
+
+//   } catch (err) {
+//     res.status(500).json({ message: err.message });
+//   }
+// };
+
 exports.adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Validate credentials against .env
+    // Validate against .env
     if (email !== process.env.ADMIN_EMAIL) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
@@ -427,7 +470,7 @@ exports.adminLogin = async (req, res) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    // Generate tokens
+    // ✅ GENERATE ACCESS & REFRESH TOKENS (same as user)
     const accessToken = jwt.sign(
       { email, role: "Admin" },
       process.env.ACCESS_SECRET,
@@ -440,11 +483,10 @@ exports.adminLogin = async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    // ✅ RETURN SAME STRUCTURE AS USER LOGIN
     res.json({
-      accessToken,     // ← Changed from 'token' to 'accessToken'
-      refreshToken,    // ← Added refresh token
-      user: {          // ← Changed from 'admin' to 'user' for consistency
+      accessToken,    // ✅ Use same field names as user login
+      refreshToken,   // ✅ Use same field names as user login
+      user: {         // ✅ Use 'user' field (not 'admin')
         email,
         role: "Admin"
       }
