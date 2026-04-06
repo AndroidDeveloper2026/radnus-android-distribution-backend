@@ -65,6 +65,24 @@ exports.deleteProduct = async (req, res) => {
   res.json({ message: "Product deleted" });
 };
 
+// exports.reduceStock = async (req, res) => {
+//   const { items } = req.body;
+
+//   try {
+//     const bulkOps = items.map((item) => ({
+//       updateOne: {
+//         filter: { _id: item.productId },
+//         update: { $inc: { stock: -item.qty } }, // ✅ reduce stock, NOT moq
+//       },
+//     }));
+
+//     await Product.bulkWrite(bulkOps);
+//     res.json({ message: 'Stock updated successfully' });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// };
+
 exports.reduceStock = async (req, res) => {
   const { items } = req.body;
 
@@ -72,7 +90,8 @@ exports.reduceStock = async (req, res) => {
     const bulkOps = items.map((item) => ({
       updateOne: {
         filter: { _id: item.productId },
-        update: { $inc: { stock: -item.qty } }, // ✅ reduce stock, NOT moq
+        // ✅ CHANGE: subtract from 'moq' (the stock field in your schema)
+        update: { $inc: { moq: -item.qty } },
       },
     }));
 
