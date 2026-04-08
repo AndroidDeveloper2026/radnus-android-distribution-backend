@@ -1,17 +1,69 @@
+// const mongoose = require('mongoose');
+
+// const CustomerSchema = new mongoose.Schema({
+//   phone: {
+//     type:     String,
+//     required: true,
+//     unique:   true,
+//     trim:     true,
+//     length:   10,
+//   },
+//   name:    { type: String, required: true, trim: true },
+//   address: { type: String, default: '' },
+//   city:    { type: String, default: '' },
+//   state:   { type: String, default: '' },
+// }, { timestamps: true });
+
+// module.exports = mongoose.model('Customer', CustomerSchema);
+
+
 const mongoose = require('mongoose');
 
-const CustomerSchema = new mongoose.Schema({
-  phone: {
-    type:     String,
-    required: true,
-    unique:   true,
-    trim:     true,
-    length:   10,
+const CustomerSchema = new mongoose.Schema(
+  {
+    phone: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      length: 10,
+    },
+
+    // ✅ NEW FIELD
+    type: {
+      type: String,
+      enum: ['customer', 'shop'],
+      default: 'customer',
+    },
+
+    // ✅ NEW FIELD (ONLY FOR SHOP)
+    shopName: {
+      type: String,
+      default: '',
+    },
+
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    address: {
+      type: String,
+      default: '',
+    },
+
+    city: {
+      type: String,
+      default: '',
+    },
+
+    state: {
+      type: String,
+      default: '',
+    },
   },
-  name:    { type: String, required: true, trim: true },
-  address: { type: String, default: '' },
-  city:    { type: String, default: '' },
-  state:   { type: String, default: '' },
-}, { timestamps: true });
+  { timestamps: true }
+);
 
 module.exports = mongoose.model('Customer', CustomerSchema);
