@@ -76,6 +76,44 @@ const createInvoice = async (req, res) => {
 };
 
 // ================= GET WITH FILTER =================
+// const getInvoices = async (req, res) => {
+//   try {
+//     const { filter } = req.query;
+
+//     let query = {};
+//     const now = new Date();
+
+//     if (filter === "today") {
+//       const start = new Date();
+//       start.setHours(0, 0, 0, 0);
+
+//       query.createdAt = { $gte: start };
+//     }
+
+//     if (filter === "week") {
+//       const start = new Date();
+//       start.setDate(now.getDate() - 7);
+
+//       query.createdAt = { $gte: start };
+//     }
+
+//     if (filter === "month") {
+//       const start = new Date();
+//       start.setMonth(now.getMonth() - 1);
+
+//       query.createdAt = { $gte: start };
+//     }
+
+//     const invoices = await Invoice.find(query)
+//       .sort({ createdAt: -1 });
+
+//     res.json(invoices);
+
+//   } catch (err) {
+//     res.status(500).json({ message: err.message });
+//   }
+// };
+
 const getInvoices = async (req, res) => {
   try {
     const { filter } = req.query;
@@ -83,30 +121,33 @@ const getInvoices = async (req, res) => {
     let query = {};
     const now = new Date();
 
-    if (filter === "today") {
-      const start = new Date();
+    // Helper to get start and end of a day in local time, then convert to UTC
+    const getDayRange = (date) => {
+      const start = new Date(date);
       start.setHours(0, 0, 0, 0);
+      const end = new Date(date);
+      end.setHours(23, 59, 59, 999);
+      return { start, end };
+    };
 
-      query.createdAt = { $gte: start };
+    if (filter === "today") {
+      const { start, end } = getDayRange(now);
+      query.createdAt = { $gte: start, $lte: end };
+    } 
+    else if (filter === "week") {
+      const weekAgo = new Date(now);
+      weekAgo.setDate(now.getDate() - 7);
+      weekAgo.setHours(0, 0, 0, 0);
+      query.createdAt = { $gte: weekAgo };
+    } 
+    else if (filter === "month") {
+      const monthAgo = new Date(now);
+      monthAgo.setMonth(now.getMonth() - 1);
+      monthAgo.setHours(0, 0, 0, 0);
+      query.createdAt = { $gte: monthAgo };
     }
 
-    if (filter === "week") {
-      const start = new Date();
-      start.setDate(now.getDate() - 7);
-
-      query.createdAt = { $gte: start };
-    }
-
-    if (filter === "month") {
-      const start = new Date();
-      start.setMonth(now.getMonth() - 1);
-
-      query.createdAt = { $gte: start };
-    }
-
-    const invoices = await Invoice.find(query)
-      .sort({ createdAt: -1 });
-
+    const invoices = await Invoice.find(query).sort({ createdAt: -1 });
     res.json(invoices);
 
   } catch (err) {
