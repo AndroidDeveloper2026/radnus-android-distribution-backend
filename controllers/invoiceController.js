@@ -1,19 +1,138 @@
+// const Invoice = require("../models/Invoice/InvoiceModel");
+
+// const getFinancialYear = () => {
+//   const now = new Date();
+
+//   const year = now.getFullYear();
+//   const month = now.getMonth() + 1; // Jan = 1
+
+//   // Financial year starts in April
+//   if (month >= 4) {
+//     return `${year}-${year + 1}`;
+//   } else {
+//     return `${year - 1}-${year}`;
+//   }
+// };
+
+// const createInvoice = async (req, res) => {
+//   try {
+//     const {
+//       items,
+//       totalAmount,
+//       paymentMode,
+//       billerName,
+//     } = req.body;
+
+//     // 🔴 DEBUG LOG
+//     console.log("BODY:", req.body);
+
+//     if (!billerName) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "billerName is required",
+//       });
+//     }
+
+//     if (!items || items.length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Items are required",
+//       });
+//     }
+
+//     const financialYear = getFinancialYear();
+
+//     const lastInvoice = await Invoice.findOne({ financialYear })
+//       .sort({ sequence: -1 });
+
+//     const nextSequence = lastInvoice ? lastInvoice.sequence + 1 : 1;
+
+//     const paddedSequence = String(nextSequence).padStart(3, "0");
+
+//     const invoiceNumber = `RC${financialYear}/${paddedSequence}`;
+
+//     const invoice = await Invoice.create({
+//       invoiceNumber,
+//       financialYear,
+//       sequence: nextSequence,
+//       billerName,
+//       items,
+//       totalAmount,
+//       paymentMode,
+//     });
+
+//     res.status(201).json({
+//       success: true,
+//       invoice,
+//     });
+
+//   } catch (err) {
+//     console.log("❌ ERROR:", err); // 🔥 VERY IMPORTANT
+//     res.status(500).json({
+//       success: false,
+//       message: err.message,
+//     });
+//   }
+// };
+
+
+
+// const getInvoices = async (req, res) => {
+//   try {
+//     const { filter } = req.query;
+
+//     let query = {};
+//     const now = new Date();
+
+//     // Helper to get start and end of a day in local time, then convert to UTC
+//     const getDayRange = (date) => {
+//       const start = new Date(date);
+//       start.setHours(0, 0, 0, 0);
+//       const end = new Date(date);
+//       end.setHours(23, 59, 59, 999);
+//       return { start, end };
+//     };
+
+//     if (filter === "today") {
+//       const { start, end } = getDayRange(now);
+//       query.createdAt = { $gte: start, $lte: end };
+//     } 
+//     else if (filter === "week") {
+//       const weekAgo = new Date(now);
+//       weekAgo.setDate(now.getDate() - 7);
+//       weekAgo.setHours(0, 0, 0, 0);
+//       query.createdAt = { $gte: weekAgo };
+//     } 
+//     else if (filter === "month") {
+//       const monthAgo = new Date(now);
+//       monthAgo.setMonth(now.getMonth() - 1);
+//       monthAgo.setHours(0, 0, 0, 0);
+//       query.createdAt = { $gte: monthAgo };
+//     }
+
+//     const invoices = await Invoice.find(query).sort({ createdAt: -1 });
+//     res.json(invoices);
+
+//   } catch (err) {
+//     res.status(500).json({ message: err.message });
+//   }
+// };
+
+// module.exports = { createInvoice, getInvoices};
+
+//----------------------
+
 const Invoice = require("../models/Invoice/InvoiceModel");
 
 const getFinancialYear = () => {
   const now = new Date();
-
   const year = now.getFullYear();
-  const month = now.getMonth() + 1; // Jan = 1
-
-  // Financial year starts in April
-  if (month >= 4) {
-    return `${year}-${year + 1}`;
-  } else {
-    return `${year - 1}-${year}`;
-  }
+  const month = now.getMonth() + 1;
+  if (month >= 4) return `${year}-${year + 1}`;
+  else return `${year - 1}-${year}`;
 };
 
+// ─── CREATE INVOICE (only after final confirmation) ─────────────────
 const createInvoice = async (req, res) => {
   try {
     const {
@@ -21,15 +140,18 @@ const createInvoice = async (req, res) => {
       totalAmount,
       paymentMode,
       billerName,
+      salesperson,
+      courierCharge,
+      referenceNo,
+      shippingAddress,
     } = req.body;
 
-    // 🔴 DEBUG LOG
-    console.log("BODY:", req.body);
+    const userId = req.user._id; // requires auth middleware
 
-    if (!billerName) {
+    if (!billerName || !salesperson) {
       return res.status(400).json({
         success: false,
-        message: "billerName is required",
+        message: "billerName and salesperson are required",
       });
     }
 
@@ -41,87 +163,43 @@ const createInvoice = async (req, res) => {
     }
 
     const financialYear = getFinancialYear();
-
-    const lastInvoice = await Invoice.findOne({ financialYear })
-      .sort({ sequence: -1 });
-
+    const lastInvoice = await Invoice.findOne({ financialYear }).sort({ sequence: -1 });
     const nextSequence = lastInvoice ? lastInvoice.sequence + 1 : 1;
-
     const paddedSequence = String(nextSequence).padStart(3, "0");
-
     const invoiceNumber = `RC${financialYear}/${paddedSequence}`;
 
     const invoice = await Invoice.create({
       invoiceNumber,
       financialYear,
       sequence: nextSequence,
+      userId,
       billerName,
+      salesperson,
       items,
       totalAmount,
       paymentMode,
+      courierCharge: courierCharge || 0,
+      referenceNo: referenceNo || '',
+      shippingAddress: shippingAddress || {},
     });
 
-    res.status(201).json({
-      success: true,
-      invoice,
-    });
-
+    res.status(201).json({ success: true, invoice });
   } catch (err) {
-    console.log("❌ ERROR:", err); // 🔥 VERY IMPORTANT
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
+    console.error("❌ createInvoice error:", err);
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// ================= GET WITH FILTER =================
-// const getInvoices = async (req, res) => {
-//   try {
-//     const { filter } = req.query;
-
-//     let query = {};
-//     const now = new Date();
-
-//     if (filter === "today") {
-//       const start = new Date();
-//       start.setHours(0, 0, 0, 0);
-
-//       query.createdAt = { $gte: start };
-//     }
-
-//     if (filter === "week") {
-//       const start = new Date();
-//       start.setDate(now.getDate() - 7);
-
-//       query.createdAt = { $gte: start };
-//     }
-
-//     if (filter === "month") {
-//       const start = new Date();
-//       start.setMonth(now.getMonth() - 1);
-
-//       query.createdAt = { $gte: start };
-//     }
-
-//     const invoices = await Invoice.find(query)
-//       .sort({ createdAt: -1 });
-
-//     res.json(invoices);
-
-//   } catch (err) {
-//     res.status(500).json({ message: err.message });
-//   }
-// };
-
+// ─── GET INVOICES (with optional user filter) ──────────────────────
 const getInvoices = async (req, res) => {
   try {
-    const { filter } = req.query;
-
+    const { filter, userId } = req.query;
     let query = {};
-    const now = new Date();
 
-    // Helper to get start and end of a day in local time, then convert to UTC
+    // Filter by user if provided
+    if (userId) query.userId = userId;
+
+    const now = new Date();
     const getDayRange = (date) => {
       const start = new Date(date);
       start.setHours(0, 0, 0, 0);
@@ -133,14 +211,12 @@ const getInvoices = async (req, res) => {
     if (filter === "today") {
       const { start, end } = getDayRange(now);
       query.createdAt = { $gte: start, $lte: end };
-    } 
-    else if (filter === "week") {
+    } else if (filter === "week") {
       const weekAgo = new Date(now);
       weekAgo.setDate(now.getDate() - 7);
       weekAgo.setHours(0, 0, 0, 0);
       query.createdAt = { $gte: weekAgo };
-    } 
-    else if (filter === "month") {
+    } else if (filter === "month") {
       const monthAgo = new Date(now);
       monthAgo.setMonth(now.getMonth() - 1);
       monthAgo.setHours(0, 0, 0, 0);
@@ -149,10 +225,9 @@ const getInvoices = async (req, res) => {
 
     const invoices = await Invoice.find(query).sort({ createdAt: -1 });
     res.json(invoices);
-
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
-module.exports = { createInvoice, getInvoices};
+module.exports = { createInvoice, getInvoices };
