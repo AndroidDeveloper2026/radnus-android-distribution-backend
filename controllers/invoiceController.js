@@ -75,8 +75,6 @@
 //   }
 // };
 
-
-
 // const getInvoices = async (req, res) => {
 //   try {
 //     const { filter } = req.query;
@@ -96,13 +94,13 @@
 //     if (filter === "today") {
 //       const { start, end } = getDayRange(now);
 //       query.createdAt = { $gte: start, $lte: end };
-//     } 
+//     }
 //     else if (filter === "week") {
 //       const weekAgo = new Date(now);
 //       weekAgo.setDate(now.getDate() - 7);
 //       weekAgo.setHours(0, 0, 0, 0);
 //       query.createdAt = { $gte: weekAgo };
-//     } 
+//     }
 //     else if (filter === "month") {
 //       const monthAgo = new Date(now);
 //       monthAgo.setMonth(now.getMonth() - 1);
@@ -239,7 +237,13 @@ const getFinancialYear = () => {
 
 const createInvoice = async (req, res) => {
   try {
-    const { items, totalAmount, paymentMode, billerName, status = "draft" } = req.body;
+    const {
+      items,
+      totalAmount,
+      paymentMode,
+      billerName,
+      status = "draft",
+    } = req.body;
 
     if (!billerName) {
       return res.status(400).json({
@@ -256,7 +260,9 @@ const createInvoice = async (req, res) => {
     }
 
     const financialYear = getFinancialYear();
-    const lastInvoice = await Invoice.findOne({ financialYear }).sort({ sequence: -1 });
+    const lastInvoice = await Invoice.findOne({ financialYear }).sort({
+      sequence: -1,
+    });
     const nextSequence = lastInvoice ? lastInvoice.sequence + 1 : 1;
     const paddedSequence = String(nextSequence).padStart(3, "0");
     const invoiceNumber = `RC${financialYear}/${paddedSequence}`;
@@ -269,7 +275,7 @@ const createInvoice = async (req, res) => {
       items,
       totalAmount,
       paymentMode,
-      status,               // ✅ store status (draft / completed)
+      status, // ✅ store status (draft / completed)
     });
 
     res.status(201).json({ success: true, invoice });
@@ -309,14 +315,12 @@ const getInvoices = async (req, res) => {
       query.createdAt = { $gte: monthAgo };
     }
 
-    // ✅ Status filtering – crucial for "Today Sales" card
+    // ✅ In getInvoices, ensure default behavior excludes drafts:
     if (status && status.trim() !== "") {
       query.status = status;
     } else {
-      // Optional: by default exclude draft invoices from all listings
-      // to avoid counting incomplete orders in dashboards.
-      // Uncomment the line below if you want drafts hidden by default.
-      // query.status = { $ne: "draft" };
+      // ✅ By default, only show completed invoices in listings
+      query.status = "completed";
     }
 
     // Filter by logged‑in user if provided
@@ -338,17 +342,21 @@ const updateInvoiceStatus = async (req, res) => {
     const { status } = req.body;
 
     if (!["draft", "completed"].includes(status)) {
-      return res.status(400).json({ success: false, message: "Invalid status" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid status" });
     }
 
     const invoice = await Invoice.findByIdAndUpdate(
       id,
       { status },
-      { new: true }
+      { new: true },
     );
 
     if (!invoice) {
-      return res.status(404).json({ success: false, message: "Invoice not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Invoice not found" });
     }
 
     res.json({ success: true, invoice });
