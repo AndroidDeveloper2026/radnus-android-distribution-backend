@@ -279,62 +279,9 @@ const createInvoice = async (req, res) => {
   }
 };
 
-// const getInvoices = async (req, res) => {
-//   try {
-//     const { filter, billerName, status } = req.query;
-//     let query = {};
-//     const now = new Date();
-
-//     const getDayRange = (date) => {
-//       const start = new Date(date);
-//       start.setHours(0, 0, 0, 0);
-//       const end = new Date(date);
-//       end.setHours(23, 59, 59, 999);
-//       return { start, end };
-//     };
-
-//     // Date filtering
-//     if (filter === "today") {
-//       const { start, end } = getDayRange(now);
-//       query.createdAt = { $gte: start, $lte: end };
-//     } else if (filter === "week") {
-//       const weekAgo = new Date(now);
-//       weekAgo.setDate(now.getDate() - 7);
-//       weekAgo.setHours(0, 0, 0, 0);
-//       query.createdAt = { $gte: weekAgo };
-//     } else if (filter === "month") {
-//       const monthAgo = new Date(now);
-//       monthAgo.setMonth(now.getMonth() - 1);
-//       monthAgo.setHours(0, 0, 0, 0);
-//       query.createdAt = { $gte: monthAgo };
-//     }
-
-//     // ✅ Status filtering – crucial for "Today Sales" card
-//     if (status && status.trim() !== "") {
-//       query.status = status;
-//     } else {
-//       // Optional: by default exclude draft invoices from all listings
-//       // to avoid counting incomplete orders in dashboards.
-//       // Uncomment the line below if you want drafts hidden by default.
-//       // query.status = { $ne: "draft" };
-//     }
-
-//     // Filter by logged‑in user if provided
-//     if (billerName && billerName.trim() !== "") {
-//       query.billerName = billerName;
-//     }
-
-//     const invoices = await Invoice.find(query).sort({ createdAt: -1 });
-//     res.json(invoices);
-//   } catch (err) {
-//     console.error("Get invoices error:", err);
-//     res.status(500).json({ message: err.message });
-//   }
-// };
-
 const getInvoices = async (req, res) => {
   try {
-    const { filter, billerName, status } = req.query; // ✅ Destructure status
+    const { filter, billerName, status } = req.query;
     let query = {};
     const now = new Date();
 
@@ -346,6 +293,7 @@ const getInvoices = async (req, res) => {
       return { start, end };
     };
 
+    // Date filtering
     if (filter === "today") {
       const { start, end } = getDayRange(now);
       query.createdAt = { $gte: start, $lte: end };
@@ -361,13 +309,19 @@ const getInvoices = async (req, res) => {
       query.createdAt = { $gte: monthAgo };
     }
 
-    if (billerName && billerName.trim() !== "") {
-      query.billerName = billerName;
-    }
-    
-    // ✅ ADD THIS: Filter by status if provided
+    // ✅ Status filtering – crucial for "Today Sales" card
     if (status && status.trim() !== "") {
       query.status = status;
+    } else {
+      // Optional: by default exclude draft invoices from all listings
+      // to avoid counting incomplete orders in dashboards.
+      // Uncomment the line below if you want drafts hidden by default.
+      // query.status = { $ne: "draft" };
+    }
+
+    // Filter by logged‑in user if provided
+    if (billerName && billerName.trim() !== "") {
+      query.billerName = billerName;
     }
 
     const invoices = await Invoice.find(query).sort({ createdAt: -1 });
