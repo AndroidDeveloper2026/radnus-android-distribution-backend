@@ -135,9 +135,50 @@ const getFinancialYear = () => {
   }
 };
 
+// const createInvoice = async (req, res) => {
+//   try {
+//     const { items, totalAmount, paymentMode, billerName } = req.body;
+
+//     if (!billerName) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "billerName is required",
+//       });
+//     }
+
+//     if (!items || items.length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Items are required",
+//       });
+//     }
+
+//     const financialYear = getFinancialYear();
+//     const lastInvoice = await Invoice.findOne({ financialYear }).sort({ sequence: -1 });
+//     const nextSequence = lastInvoice ? lastInvoice.sequence + 1 : 1;
+//     const paddedSequence = String(nextSequence).padStart(3, "0");
+//     const invoiceNumber = `RC${financialYear}/${paddedSequence}`;
+
+//     const invoice = await Invoice.create({
+//       invoiceNumber,
+//       financialYear,
+//       sequence: nextSequence,
+//       billerName,
+//       items,
+//       totalAmount,
+//       paymentMode,
+//     });
+
+//     res.status(201).json({ success: true, invoice });
+//   } catch (err) {
+//     console.error("Create invoice error:", err);
+//     res.status(500).json({ success: false, message: err.message });
+//   }
+// };
+
 const createInvoice = async (req, res) => {
   try {
-    const { items, totalAmount, paymentMode, billerName } = req.body;
+    const { items, totalAmount, paymentMode, billerName, status } = req.body;
 
     if (!billerName) {
       return res.status(400).json({
@@ -156,6 +197,7 @@ const createInvoice = async (req, res) => {
     const financialYear = getFinancialYear();
     const lastInvoice = await Invoice.findOne({ financialYear }).sort({ sequence: -1 });
     const nextSequence = lastInvoice ? lastInvoice.sequence + 1 : 1;
+
     const paddedSequence = String(nextSequence).padStart(3, "0");
     const invoiceNumber = `RC${financialYear}/${paddedSequence}`;
 
@@ -167,6 +209,7 @@ const createInvoice = async (req, res) => {
       items,
       totalAmount,
       paymentMode,
+      status: status || "draft", // ✅ IMPORTANT
     });
 
     res.status(201).json({ success: true, invoice });
@@ -218,6 +261,29 @@ const getInvoices = async (req, res) => {
   }
 };
 
-module.exports = { createInvoice, getInvoices };
+
+const updateInvoiceStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const invoice = await Invoice.findOneAndUpdate(
+      { invoiceNumber: id },
+      { status },
+      { new: true }
+    );
+
+    if (!invoice) {
+      return res.status(404).json({ message: "Invoice not found" });
+    }
+
+    res.json(invoice);
+  } catch (err) {
+    console.error("Update invoice error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+module.exports = { createInvoice, getInvoices, updateInvoiceStatus };
 
 
