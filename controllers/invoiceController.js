@@ -128,7 +128,7 @@ const updateInvoiceStatus = async (req, res) => {
 };
 
 
-exports.deleteInvoice = async (req, res) => {
+const deleteInvoice = async (req, res) => {
   try {
     const { invoiceNumber } = req.params;
 
