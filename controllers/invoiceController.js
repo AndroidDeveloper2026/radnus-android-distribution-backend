@@ -128,24 +128,40 @@ const updateInvoiceStatus = async (req, res) => {
 };
 
 // ✅ DELETE INVOICE (for cleaning up draft invoices)
-const deleteInvoice = async (req, res) => {
+// const deleteInvoice = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+
+//     const invoice = await Invoice.findOneAndDelete({ invoiceNumber: id });
+
+//     if (!invoice) {
+//       return res.status(404).json({ message: 'Invoice not found' });
+//     }
+
+//     res.json({
+//       success: true,
+//       message: 'Invoice deleted successfully',
+//       invoice,
+//     });
+//   } catch (err) {
+//     console.error("deleteInvoice error:", err);
+//     res.status(500).json({ message: err.message });
+//   }
+// };
+
+exports.deleteInvoice = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { invoiceNumber } = req.params;
 
-    const invoice = await Invoice.findOneAndDelete({ invoiceNumber: id });
+    const deleted = await Invoice.findOneAndDelete({ invoiceNumber });
 
-    if (!invoice) {
-      return res.status(404).json({ message: 'Invoice not found' });
+    if (!deleted) {
+      return res.status(404).json({ msg: "Invoice not found" });
     }
 
-    res.json({
-      success: true,
-      message: 'Invoice deleted successfully',
-      invoice,
-    });
+    res.json({ msg: "Invoice deleted successfully" });
   } catch (err) {
-    console.error("deleteInvoice error:", err);
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ msg: err.message });
   }
 };
 
