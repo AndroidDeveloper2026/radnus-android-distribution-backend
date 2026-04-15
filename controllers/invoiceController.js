@@ -2,11 +2,8 @@
 
 // const getFinancialYear = () => {
 //   const now = new Date();
-
 //   const year = now.getFullYear();
 //   const month = now.getMonth() + 1; // Jan = 1
-
-//   // Financial year starts in April
 //   if (month >= 4) {
 //     return `${year}-${year + 1}`;
 //   } else {
@@ -16,15 +13,7 @@
 
 // const createInvoice = async (req, res) => {
 //   try {
-//     const {
-//       items,
-//       totalAmount,
-//       paymentMode,
-//       billerName,
-//     } = req.body;
-
-//     // 🔴 DEBUG LOG
-//     console.log("BODY:", req.body);
+//     const { items, totalAmount, paymentMode, billerName } = req.body;
 
 //     if (!billerName) {
 //       return res.status(400).json({
@@ -41,14 +30,9 @@
 //     }
 
 //     const financialYear = getFinancialYear();
-
-//     const lastInvoice = await Invoice.findOne({ financialYear })
-//       .sort({ sequence: -1 });
-
+//     const lastInvoice = await Invoice.findOne({ financialYear }).sort({ sequence: -1 });
 //     const nextSequence = lastInvoice ? lastInvoice.sequence + 1 : 1;
-
 //     const paddedSequence = String(nextSequence).padStart(3, "0");
-
 //     const invoiceNumber = `RC${financialYear}/${paddedSequence}`;
 
 //     const invoice = await Invoice.create({
@@ -61,28 +45,19 @@
 //       paymentMode,
 //     });
 
-//     res.status(201).json({
-//       success: true,
-//       invoice,
-//     });
-
+//     res.status(201).json({ success: true, invoice });
 //   } catch (err) {
-//     console.log("❌ ERROR:", err); // 🔥 VERY IMPORTANT
-//     res.status(500).json({
-//       success: false,
-//       message: err.message,
-//     });
+//     console.error("Create invoice error:", err);
+//     res.status(500).json({ success: false, message: err.message });
 //   }
 // };
 
 // const getInvoices = async (req, res) => {
 //   try {
-//     const { filter } = req.query;
-
+//     const { filter, billerName } = req.query;
 //     let query = {};
 //     const now = new Date();
 
-//     // Helper to get start and end of a day in local time, then convert to UTC
 //     const getDayRange = (date) => {
 //       const start = new Date(date);
 //       start.setHours(0, 0, 0, 0);
@@ -94,31 +69,35 @@
 //     if (filter === "today") {
 //       const { start, end } = getDayRange(now);
 //       query.createdAt = { $gte: start, $lte: end };
-//     }
-//     else if (filter === "week") {
+//     } else if (filter === "week") {
 //       const weekAgo = new Date(now);
 //       weekAgo.setDate(now.getDate() - 7);
 //       weekAgo.setHours(0, 0, 0, 0);
 //       query.createdAt = { $gte: weekAgo };
-//     }
-//     else if (filter === "month") {
+//     } else if (filter === "month") {
 //       const monthAgo = new Date(now);
 //       monthAgo.setMonth(now.getMonth() - 1);
 //       monthAgo.setHours(0, 0, 0, 0);
 //       query.createdAt = { $gte: monthAgo };
 //     }
 
+//     // Filter by logged-in user's name if provided
+//     if (billerName && billerName.trim() !== "") {
+//       query.billerName = billerName;
+//     }
+
 //     const invoices = await Invoice.find(query).sort({ createdAt: -1 });
 //     res.json(invoices);
-
 //   } catch (err) {
+//     console.error("Get invoices error:", err);
 //     res.status(500).json({ message: err.message });
 //   }
 // };
 
-// module.exports = { createInvoice, getInvoices};
+// module.exports = { createInvoice, getInvoices };
 
-//---------------------------------------------
+
+//---------------------New code------------------------
 
 // backend/controllers/invoiceController.js
 
@@ -137,7 +116,7 @@ const getFinancialYear = () => {
 
 const createInvoice = async (req, res) => {
   try {
-    const { items, totalAmount, paymentMode, billerName } = req.body;
+    const { items, totalAmount, paymentMode, billerName, status = 'draft' } = req.body;
 
     if (!billerName) {
       return res.status(400).json({
@@ -167,6 +146,7 @@ const createInvoice = async (req, res) => {
       items,
       totalAmount,
       paymentMode,
+      status, // ✅ Explicitly set status (defaults to 'draft')
     });
 
     res.status(201).json({ success: true, invoice });
@@ -205,6 +185,9 @@ const getInvoices = async (req, res) => {
       query.createdAt = { $gte: monthAgo };
     }
 
+    // ✅ CRITICAL: Only return 'completed' invoices, exclude 'draft'
+    query.status = 'completed';
+
     // Filter by logged-in user's name if provided
     if (billerName && billerName.trim() !== "") {
       query.billerName = billerName;
@@ -218,6 +201,36 @@ const getInvoices = async (req, res) => {
   }
 };
 
-module.exports = { createInvoice, getInvoices };
+// ✅ NEW ENDPOINT: Mark a draft invoice as completed (call on successful print)
+const completeInvoice = async (req, res) => {
+  try {
+    const { invoiceId } = req.body;
 
+    if (!invoiceId) {
+      return res.status(400).json({
+        success: false,
+        message: "invoiceId is required",
+      });
+    }
 
+    const invoice = await Invoice.findByIdAndUpdate(
+      invoiceId,
+      { status: 'completed' },
+      { new: true }
+    );
+
+    if (!invoice) {
+      return res.status(404).json({
+        success: false,
+        message: "Invoice not found",
+      });
+    }
+
+    res.json({ success: true, invoice });
+  } catch (err) {
+    console.error("Complete invoice error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+module.exports = { createInvoice, getInvoices, completeInvoice };
