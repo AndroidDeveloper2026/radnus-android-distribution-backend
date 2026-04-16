@@ -44,14 +44,13 @@ const createActivityLog = async (req, res) => {
 
 const getActivityLogs = async (req, res) => {
   try {
-    if (req.user.role.toLowerCase() !== "admin") { // ✅ FIXED
-      return res.status(403).json({ message: "Forbidden" });
-    }
-
     const logs = await ActivityLog.find().sort({ timestamp: -1 });
+
+    console.log("DB LOGS:", logs);
 
     res.json(logs); // ✅ MUST return array
   } catch (err) {
+    console.error(err);
     res.status(500).json({ message: err.message });
   }
 };
