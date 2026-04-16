@@ -1,20 +1,29 @@
 const ActivityLog = require("../models/ActivityLog");
+const Register = require("../models/Register");
 
 // CREATE LOG
 const createActivityLog = async (req, res) => {
   try {
     const { action, productId, productName } = req.body;
 
+    // 🔍 Fetch user from DB (100% safe)
+    const dbUser = await Register.findById(req.user.id);
+
+    if (!dbUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
     const log = await ActivityLog.create({
       action,
       productId,
       productName,
-      user: req.user.name,
-      role: req.user.role,
+      user: dbUser.name,   // ✅ always exists
+      role: dbUser.role,
     });
 
     res.status(201).json(log);
   } catch (err) {
+    console.error("Create Log Error:", err);
     res.status(500).json({ message: err.message });
   }
 };
