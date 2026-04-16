@@ -27,16 +27,30 @@ const createActivityLog = async (req, res) => {
   }
 };
 
-// GET LOGS (ADMIN)
+// // GET LOGS (ADMIN)
+// const getActivityLogs = async (req, res) => {
+//   try {
+//     if (req.user.role !== "Admin") {
+//       return res.status(403).json({ error: "Forbidden" });
+//     }
+
+//     const logs = await ActivityLog.find().sort({ timestamp: -1 });
+
+//     res.json(logs);
+//   } catch (err) {
+//     res.status(500).json({ message: err.message });
+//   }
+// };
+
 const getActivityLogs = async (req, res) => {
   try {
-    if (req.user.role !== "Admin") {
-      return res.status(403).json({ error: "Forbidden" });
+    if (req.user.role.toLowerCase() !== "admin") { // ✅ FIXED
+      return res.status(403).json({ message: "Forbidden" });
     }
 
     const logs = await ActivityLog.find().sort({ timestamp: -1 });
 
-    res.json(logs);
+    res.json(logs); // ✅ MUST return array
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
