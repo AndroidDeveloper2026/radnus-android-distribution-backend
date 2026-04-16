@@ -1,12 +1,11 @@
 const ActivityLog = require("../models/ActivityLog");
 const Register = require("../models/Register");
 
-// CREATE LOG
 const createActivityLog = async (req, res) => {
   try {
     const { action, productId, productName } = req.body;
 
-    // 🔍 Fetch user from DB (100% safe)
+    // ✅ Fetch user from DB
     const dbUser = await Register.findById(req.user.id);
 
     if (!dbUser) {
@@ -17,13 +16,13 @@ const createActivityLog = async (req, res) => {
       action,
       productId,
       productName,
-      user: dbUser.name,   // ✅ always exists
+      user: dbUser.name,   // ✅ FIXED
       role: dbUser.role,
     });
 
     res.status(201).json(log);
   } catch (err) {
-    console.error("Create Log Error:", err);
+    console.error("LOG ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };
