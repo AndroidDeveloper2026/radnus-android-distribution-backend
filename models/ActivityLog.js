@@ -22,9 +22,10 @@ const activityLogSchema = new mongoose.Schema({
   },
   productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
   productName: { type: String },
+  customerIdentifier: { type: String }, // ✅ phone or name of customer edited
   user: { type: String, required: true },
   role: { type: String, enum: ['Admin', 'Radnus'], required: true },
-  changes: { type: Object, default: null }, // ✅ stores old/new values
+  changes: { type: Object, default: null },
   timestamp: { type: Date, default: Date.now },
 });
 

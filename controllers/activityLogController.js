@@ -51,7 +51,7 @@ const Register = require("../models/Register");
 
 const createActivityLog = async (req, res) => {
   try {
-    const { action, productId, productName, changes } = req.body;
+    const { action, productId, productName, customerIdentifier, changes } = req.body;
 
     const dbUser = await Register.findById(req.user.id);
     if (!dbUser) {
@@ -62,9 +62,10 @@ const createActivityLog = async (req, res) => {
       action,
       productId,
       productName,
+      customerIdentifier, // ✅ store which customer
       user: dbUser.name,
       role: dbUser.role,
-      changes, // ✅ store the changes object
+      changes,
     });
 
     res.status(201).json(log);
