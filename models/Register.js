@@ -12,7 +12,7 @@ const registerSchema = new mongoose.Schema(
         "Retailer",
         "MarketingManager",
         "MarketingExecutive",
-        "Radnus"
+        "Radnus",
       ],
     },
 
@@ -56,6 +56,11 @@ const registerSchema = new mongoose.Schema(
       minlength: 6,
     },
 
+    photo: {
+      type: String, // Cloudinary URL for Executive/Agent photo
+      default: null,
+    },
+
     // ⭐ FCM TOKEN
     fcmToken: {
       type: String,
@@ -85,11 +90,9 @@ const registerSchema = new mongoose.Schema(
     resetOtpExpiry: {
       type: Date,
     },
-    
   },
   { timestamps: true },
 );
-
 
 registerSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
@@ -104,6 +107,5 @@ registerSchema.methods.generateOtp = function () {
 
   return otp;
 };
-
 
 module.exports = mongoose.model("Register", registerSchema);
