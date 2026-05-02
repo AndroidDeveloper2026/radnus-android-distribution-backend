@@ -13,80 +13,51 @@ exports.getProfile = async (req, res) => {
   }
 };
 
-// // PUT /api/profile/me
-// exports.updateProfile = async (req, res) => {
-//   try {
-//     const { role, ...fields } = req.body;
-//     const userId = req.user.id;
-//     let photoUrl = null;
+// PUT /api/profile/me
+exports.updateProfile = async (req, res) => {
+  try {
+    const { role, ...fields } = req.body;
+    const userId = req.user.id;
+    let photoUrl = null;
 
-//     // 1. Upload photo if file is present
-//     if (req.file) {
-//       const result = await uploadToCloudinary(req.file.buffer, "profile_photos");
-//       photoUrl = result.secure_url;
-//     }
+    // 1. Upload photo if file is present
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, "profile_photos");
+      photoUrl = result.secure_url;
+    }
 
-//     // 2. Determine allowed fields per role
-//     const allowedFields = getRoleFields(role);
-//     const updateData = {};
-//     Object.keys(fields).forEach((key) => {
-//       if (allowedFields.includes(key)) {
-//         updateData[key] = fields[key];
-//       }
-//     });
-
-//     // 3. Assign the correct image field
-//     if (photoUrl) {
-//       const imageField = role === "Retailer" ? "shopPhoto" : "photo";
-//       updateData[imageField] = photoUrl;
-//     }
-
-//     // 4. Update user
-//     const updatedUser = await User.findByIdAndUpdate(
-//       userId,
-//       updateData,
-//       { new: true, select: "-password" }
-//     );
-
-//     if (!updatedUser) {
-//       return res.status(404).json({ message: "User not found" });
-//     }
-
-//     res.json(updatedUser);
-//   } catch (err) {
-//     console.error("Update profile error:", err);
-//     res.status(500).json({ message: "Server error" });
-//   }
-// };
-
-export const updateProfile = createAsyncThunk(
-  "profile/update",
-  async ({ role, data, photo }) => {
-    const formData = new FormData();
-
-    Object.keys(data).forEach(key => {
-      if (data[key] !== undefined && data[key] !== null) {
-        formData.append(key, data[key]);
+    // 2. Determine allowed fields per role
+    const allowedFields = getRoleFields(role);
+    const updateData = {};
+    Object.keys(fields).forEach((key) => {
+      if (allowedFields.includes(key)) {
+        updateData[key] = fields[key];
       }
     });
 
-    formData.append("role", role);
-
-    if (photo) {
-      formData.append("photo", {
-        uri: photo.uri,
-        type: photo.type,
-        name: photo.name,
-      });
+    // 3. Assign the correct image field
+    if (photoUrl) {
+      const imageField = role === "Retailer" ? "shopPhoto" : "photo";
+      updateData[imageField] = photoUrl;
     }
 
-    const res = await API.put("/api/profile/me", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
+    // 4. Update user
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      updateData,
+      { new: true, select: "-password" }
+    );
 
-    return res.data;
+    if (!updatedUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json(updatedUser);
+  } catch (err) {
+    console.error("Update profile error:", err);
+    res.status(500).json({ message: "Server error" });
   }
-);
+};
 
 // Helper: allowed fields per role
 function getRoleFields(role) {
