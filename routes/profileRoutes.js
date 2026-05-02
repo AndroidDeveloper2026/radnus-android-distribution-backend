@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
-const auth = require("../middleware/auth"); // your auth middleware
+const auth = require("../middleware/authMiddleware"); // your auth middleware
 const { getProfile, updateProfile } = require("../controllers/profileController");
 
 // Multer: store image in memory so we can upload buffer to Cloudinary
