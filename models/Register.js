@@ -1,3 +1,161 @@
+
+const mongoose = require("mongoose");
+const bcrypt = require("bcrypt");
+
+const registerSchema = new mongoose.Schema(
+  {
+    // 🔐 Authentication Fields
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+    password: {
+      type: String,
+      required: true,
+      minlength: 6,
+    },
+    mobile: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+    },
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    // 📍 Location Fields
+    state: {
+      type: String,
+      required: true,
+    },
+    district: {
+      type: String,
+      required: true,
+    },
+    taluk: {
+      type: String,
+      required: true,
+    },
+
+    // 👤 Role & Profile
+    role: {
+      type: String,
+      enum: ["Admin", "Radnus", "MarketingManager", "MarketingExecutive", "Distributor", "FSE", "Retailer"],
+      required: true,
+    },
+
+    // 🔐 OTP Fields
+    otp: {
+      type: String,
+    },
+    otpExpiry: {
+      type: Date,
+    },
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    // 🔑 Reset Password OTP
+    resetOtp: {
+      type: String,
+    },
+    resetOtpExpiry: {
+      type: Date,
+    },
+
+    // 📱 FCM Token
+    fcmToken: {
+      type: String,
+    },
+
+    // ✅ APPROVAL SYSTEM FIELDS (NEW)
+    isApproved: {
+      type: Boolean,
+      default: false,
+    },
+    approvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Register",
+    },
+    approvedAt: {
+      type: Date,
+    },
+    registrationStatus: {
+      type: String,
+      enum: ["pending", "approved", "rejected"],
+      default: "pending",
+    },
+    rejectionReason: {
+      type: String,
+    },
+
+    // 👔 EMPLOYEE SPECIFIC FIELDS (Radnus only)
+    employeeId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+    department: {
+      type: String,
+      enum: ["Sales", "Marketing", "Operations", "Admin", "Distribution"],
+    },
+    designation: {
+      type: String,
+    },
+    joiningDate: {
+      type: Date,
+    },
+
+    // 📸 Profile Photo
+    photo: {
+      type: String,
+    },
+
+    // 🕒 Timestamps
+    lastLogin: {
+      type: Date,
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+// 🔐 Hash password before saving
+registerSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+  next();
+});
+
+// 🎲 Generate OTP
+registerSchema.methods.generateOtp = function () {
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  this.otp = otp;
+  this.otpExpiry = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+  return otp;
+};
+
+// 🔐 Compare password
+registerSchema.methods.comparePassword = async function (candidatePassword) {
+  return await bcrypt.compare(candidatePassword, this.password);
+};
+
+module.exports = mongoose.model("Register", registerSchema);
+//------------  below code is old ----------
+
 // const mongoose = require("mongoose");
 // const bcrypt = require("bcrypt");
 
@@ -110,127 +268,3 @@
 
 // module.exports = mongoose.model("Register", registerSchema);
 
-//+++++++++++++++++++++++++++++++++++++++++++++++++
-
-const mongoose = require("mongoose");
-const bcrypt = require("bcrypt");
-
-const RegisterSchema = new mongoose.Schema(
-  {
-    // Existing fields
-    role: {
-      type: String,
-      enum: [
-        "Admin",
-        "MarketingManager",
-        "MarketingExecutive",
-        "Distributor",
-        "FSE",
-        "Retailer",
-        "radnus_employee",  // ⭐ ADDED
-      ],
-      required: true,
-    },
-    state: {
-      type: String,
-      required: true,
-    },
-    district: {
-      type: String,
-      required: true,
-    },
-    taluk: {
-      type: String,
-      required: true,
-    },
-    name: {
-      type: String,
-      required: true,
-    },
-    email: {
-      type: String,
-      required: true,
-      unique: true,
-    },
-    mobile: {
-      type: String,
-      required: true,
-      unique: true,
-    },
-    password: {
-      type: String,
-      required: true,
-    },
-    fcmToken: {
-      type: String,
-    },
-    isVerified: {
-      type: Boolean,
-      default: false,
-    },
-    otp: {
-      type: String,
-    },
-    otpExpiry: {
-      type: Date,
-    },
-    resetOtp: {
-      type: String,
-    },
-    resetOtpExpiry: {
-      type: Date,
-    },
-
-    // ⭐ NEW FIELDS FOR EMPLOYEE REGISTRATION
-    employeeId: {
-      type: String,
-      trim: true,
-      uppercase: true,
-    },
-    registrationType: {
-      type: String,
-      enum: ['employee', 'external'],
-      default: 'external',
-    },
-    status: {
-      type: String,
-      enum: ['pending_approval', 'approved', 'rejected'],
-      default: 'pending_approval',
-    },
-    isActive: {
-      type: Boolean,
-      default: false,
-    },
-    approvedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Register',
-    },
-    approvedAt: {
-      type: Date,
-    },
-    rejectionReason: {
-      type: String,
-    },
-  },
-  {
-    timestamps: true,
-  }
-);
-
-// Hash password before saving (if not already hashed)
-RegisterSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
-  next();
-});
-
-// Generate OTP
-RegisterSchema.methods.generateOtp = function () {
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  this.otp = otp;
-  this.otpExpiry = new Date(Date.now() + 5 * 60 * 1000);
-  return otp;
-};
-
-module.exports = mongoose.model("Register", RegisterSchema);
