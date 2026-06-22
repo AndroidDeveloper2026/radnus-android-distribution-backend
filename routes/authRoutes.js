@@ -76,5 +76,37 @@ router.get('/me', auth, async (req, res) => {
 //   res.json({ valid: true, userId: req.user.id });
 // });
 
+//----------- newly added ------------------
+
+// ============================================================
+//  ⭐ NEW - EMPLOYEE REGISTRATION STATUS & APPROVAL ROUTES
+// ============================================================
+
+// ✅ Check Registration Status (Public)
+router.get("/registration-status/:id", authController.checkRegistrationStatus);
+
+// ✅ Get Pending Approvals (Admin only)
+router.get("/pending-approvals", auth, isAdmin, authController.getPendingApprovals);
+
+// ✅ Approve User (Admin only)
+router.put("/approve-user/:userId", auth, isAdmin, authController.approveUser);
+
+// ✅ Reject User (Admin only)
+router.put("/reject-user/:userId", auth, isAdmin, authController.rejectUser);
+
+// ============================================================
+//  ADMIN MIDDLEWARE
+// ============================================================
+
+function isAdmin(req, res, next) {
+  if (req.user?.role !== 'Admin') {
+    return res.status(403).json({ 
+      message: '❌ Admin access required' 
+    });
+  }
+  next();
+}
+
+//---------- end ----------------
 
 module.exports = router;

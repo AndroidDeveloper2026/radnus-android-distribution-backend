@@ -1,19 +1,51 @@
 const jwt = require("jsonwebtoken");
 
 const generateAccessToken = (user) => {
- return jwt.sign(
-   { id: user._id, role: user.role },
-   process.env.ACCESS_SECRET,
-   { expiresIn: "15m" }
- );
+  return jwt.sign(
+    { 
+      id: user._id, 
+      role: user.role,
+      email: user.email   // ✅ ADDED - Include email for admin checks
+    },
+    process.env.ACCESS_SECRET,
+    { expiresIn: "15m" }
+  );
 };
 
 const generateRefreshToken = (user) => {
- return jwt.sign(
-   { id: user._id },
-   process.env.REFRESH_SECRET,
-   { expiresIn: "7d" }
- );
+  return jwt.sign(
+    { 
+      id: user._id,
+      role: user.role    // ✅ ADDED - Include role for refresh validation
+    },
+    process.env.REFRESH_SECRET,
+    { expiresIn: "7d" }
+  );
 };
 
-module.exports = { generateAccessToken, generateRefreshToken };
+module.exports = {
+  generateAccessToken,
+  generateRefreshToken,
+};
+
+//----- below is working old code -------
+
+// const jwt = require("jsonwebtoken");
+
+// const generateAccessToken = (user) => {
+//  return jwt.sign(
+//    { id: user._id, role: user.role },
+//    process.env.ACCESS_SECRET,
+//    { expiresIn: "15m" }
+//  );
+// };
+
+// const generateRefreshToken = (user) => {
+//  return jwt.sign(
+//    { id: user._id },
+//    process.env.REFRESH_SECRET,
+//    { expiresIn: "7d" }
+//  );
+// };
+
+// module.exports = { generateAccessToken, generateRefreshToken };
