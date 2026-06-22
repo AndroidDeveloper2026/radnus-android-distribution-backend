@@ -1,3 +1,4 @@
+// controllers/authController.js
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
@@ -6,223 +7,51 @@ const admin = require("../config/firebaseAdmin");
 const { generateAccessToken, generateRefreshToken } = require("../utils/token");
 const resend = require("../config/resend");
 
-// ============================================================
-// 📝 REGISTER - Only Radnus Employees
-// ============================================================
-exports.register = async (req, res) => {
+// ─── FORGOT PASSWORD ──────────────────────────────────────────────────
+exports.forgotPassword = async (req, res) => {
   try {
-    const {
-      role,
-      state,
-      district,
-      taluk,
-      name,
-      email,
-      mobile,
-      password,
-      confirmPassword,
-      fcmToken,
-      employeeId,
-      department,
-      designation,
-      joiningDate,
-    } = req.body;
+    const { email } = req.body;
 
-    // 🔒 ONLY ALLOW Radnus ROLE TO REGISTER
-    if (role !== "Radnus") {
-      return res.status(403).json({
-        success: false,
-        message: "Only Radnus employees can register. Please contact admin.",
-      });
-    }
-
-    // ✅ Validation
-    if (
-      !role ||
-      !state ||
-      !district ||
-      !taluk ||
-      !name ||
-      !email ||
-      !mobile ||
-      !password
-    ) {
+    if (!email) {
       return res.status(400).json({
-        success: false,
-        message: "All fields are required",
+        message: "Email is required",
       });
     }
-
-    if (password !== confirmPassword) {
-      return res.status(400).json({
-        success: false,
-        message: "Passwords do not match",
-      });
-    }
-
-    if (!fcmToken) {
-      return res.status(400).json({
-        success: false,
-        message: "FCM token required",
-      });
-    }
-
-    // Check if mobile already exists
-    const existingUser = await Register.findOne({ mobile });
-    if (existingUser) {
-      return res.status(409).json({
-        success: false,
-        message: "Mobile number already registered",
-      });
-    }
-
-    // Check if email already exists
-    const existingEmail = await Register.findOne({ email });
-    if (existingEmail) {
-      return res.status(409).json({
-        success: false,
-        message: "Email already registered",
-      });
-    }
-
-    // Check if employeeId is unique (if provided)
-    if (employeeId) {
-      const existingEmployee = await Register.findOne({ employeeId });
-      if (existingEmployee) {
-        return res.status(409).json({
-          success: false,
-          message: "Employee ID already exists",
-        });
-      }
-    }
-
-    // 💾 Create user with approval status
-    const user = new Register({
-      role,
-      state,
-      district,
-      taluk,
-      name,
-      email,
-      mobile,
-      password,
-      fcmToken,
-      employeeId,
-      department,
-      designation,
-      joiningDate: joiningDate || new Date(),
-      isApproved: false,
-      registrationStatus: "pending",
-    });
-
-    const otp = user.generateOtp();
-    await user.save();
-
-    // Send OTP via FCM
-    if (fcmToken) {
-      try {
-        await admin.messaging().send({
-          token: fcmToken,
-          notification: {
-            title: "OTP Verification",
-            body: `Your OTP is ${otp}`,
-          },
-          data: {
-            type: "registration_otp",
-            otp: otp,
-          },
-        });
-      } catch (fcmError) {
-        console.error("FCM notification error:", fcmError);
-        // Don't fail registration if notification fails
-      }
-    }
-
-    res.status(201).json({
-      success: true,
-      message:
-        "Registration submitted for admin approval. OTP sent for verification.",
-      userId: user._id,
-      registrationStatus: "pending",
-      requiresApproval: true,
-    });
-  } catch (error) {
-    console.error("Registration error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-    });
-  }
-};
-
-// ============================================================
-// 🔐 LOGIN - Check approval status
-// ============================================================
-exports.login = async (req, res) => {
-  try {
-    const { email, password, role } = req.body;
 
     const user = await Register.findOne({ email });
 
     if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: "User not found",
+      return res.json({
+        success: true,
+        message: "If email exists, OTP sent",
       });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
 
-    if (!isMatch) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid credentials",
-      });
-    }
-
-    // ✅ CHECK ROLE
-    if (user.role !== role) {
-      return res.status(403).json({
-        success: false,
-        message: "Invalid role selected",
-      });
-    }
-
-    // ✅ CHECK APPROVAL STATUS
-    if (user.role === "Radnus" && user.registrationStatus !== "approved") {
-      const message =
-        user.registrationStatus === "pending"
-          ? "Your account is pending admin approval. Please wait for approval before logging in."
-          : "Your account has been rejected. Please contact admin.";
-
-      return res.status(403).json({
-        success: false,
-        message,
-        registrationStatus: user.registrationStatus,
-      });
-    }
-
-    // ✅ Update last login
-    user.lastLogin = new Date();
+    user.resetOtp = hashedOtp;
+    user.resetOtpExpiry = new Date(Date.now() + 10 * 60 * 1000);
     await user.save();
 
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
+    await resend.emails.send({
+      from: "Radnus Distribution App <noreply@service.radnus.in>",
+      to: email,
+      subject: "Password Reset OTP",
+      html: `
+        <h2>Password Reset</h2>
+        <p>Your OTP is:</p>
+        <h1>${otp}</h1>
+        <p>This OTP expires in 10 minutes.</p>
+      `,
+    });
 
-    // Remove sensitive data
-    const userData = user.toObject();
-    delete userData.password;
-    delete userData.otp;
-    delete userData.resetOtp;
-
-    res.json({
+    return res.json({
       success: true,
-      accessToken,
-      refreshToken,
-      user: userData,
+      message: "OTP sent to email",
     });
   } catch (err) {
-    console.error("Login error:", err);
+    console.error("FORGOT PASSWORD ERROR:", err);
     res.status(500).json({
       success: false,
       message: err.message,
@@ -230,89 +59,71 @@ exports.login = async (req, res) => {
   }
 };
 
-// ============================================================
-// 👑 ADMIN LOGIN
-// ============================================================
-exports.adminLogin = async (req, res) => {
+// ─── VERIFY RESET OTP ────────────────────────────────────────────────
+exports.verifyResetOtp = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, otp } = req.body;
 
-    // Validate against .env
-    if (email !== process.env.ADMIN_EMAIL) {
-      return res.status(401).json({ message: "Invalid credentials" });
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+
+    const user = await Register.findOne({
+      email,
+      resetOtp: hashedOtp,
+      resetOtpExpiry: { $gt: Date.now() },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired OTP",
+      });
     }
-
-    const isMatch = await bcrypt.compare(
-      password,
-      process.env.ADMIN_PASSWORD_HASH
-    );
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid credentials" });
-    }
-
-    const accessToken = jwt.sign(
-      { email, role: "Admin" },
-      process.env.ACCESS_SECRET,
-      { expiresIn: "15m" }
-    );
-
-    const refreshToken = jwt.sign(
-      { email, role: "Admin" },
-      process.env.REFRESH_SECRET,
-      { expiresIn: "7d" }
-    );
 
     res.json({
       success: true,
-      accessToken,
-      refreshToken,
-      user: {
-        email,
-        role: "Admin",
-        name: "Admin",
-      },
+      message: "OTP verified",
     });
   } catch (err) {
-    console.error("Admin login error:", err);
     res.status(500).json({ message: err.message });
   }
 };
 
-// ============================================================
-// 🔄 REFRESH TOKEN
-// ============================================================
-exports.refreshToken = async (req, res) => {
-  const { refreshToken } = req.body;
-
-  if (!refreshToken) {
-    return res.status(401).json({ message: "No refresh token" });
-  }
-
+// ─── RESET PASSWORD ──────────────────────────────────────────────────
+exports.resetPassword = async (req, res) => {
   try {
-    const decoded = jwt.verify(refreshToken, process.env.REFRESH_SECRET);
+    const { email, otp, password } = req.body;
 
-    const user = await Register.findById(decoded.id);
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
+
+    const user = await Register.findOne({
+      email,
+      resetOtp: hashedOtp,
+      resetOtpExpiry: { $gt: Date.now() },
+    });
 
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(400).json({
+        message: "Invalid or expired OTP",
+      });
     }
 
-    const newAccessToken = jwt.sign(
-      { id: user._id, role: user.role },
-      process.env.ACCESS_SECRET,
-      { expiresIn: "15m" }
-    );
+    // Password will be hashed by pre-save hook
+    user.password = password;
+    user.resetOtp = undefined;
+    user.resetOtpExpiry = undefined;
 
-    res.json({ accessToken: newAccessToken });
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Password reset successful",
+    });
   } catch (err) {
-    console.log("Refresh error:", err.message);
-    res.status(403).json({ message: "Invalid refresh token" });
+    res.status(500).json({ message: err.message });
   }
 };
 
-// ============================================================
-// ✅ VERIFY OTP
-// ============================================================
+// ─── VERIFY OTP ──────────────────────────────────────────────────────
 exports.verifyOtp = async (req, res) => {
   try {
     let { mobile, otp } = req.body;
@@ -336,6 +147,16 @@ exports.verifyOtp = async (req, res) => {
       });
     }
 
+    // ✅ Check approval for Radnus
+    if (user.role === 'Radnus' && !user.isApproved) {
+      return res.status(403).json({
+        success: false,
+        message: "Account pending admin approval. Please wait.",
+        requiresApproval: true,
+        status: user.status
+      });
+    }
+
     if (!user.otp || user.otp !== otp) {
       return res.status(400).json({
         success: false,
@@ -353,15 +174,22 @@ exports.verifyOtp = async (req, res) => {
     user.isVerified = true;
     user.otp = null;
     user.otpExpiry = null;
+    user.status = 'approved';
 
     await user.save();
 
     res.json({
       success: true,
       message: "OTP verified successfully",
+      user: {
+        id: user._id,
+        name: user.name,
+        role: user.role,
+        isVerified: user.isVerified,
+        isApproved: user.isApproved
+      }
     });
   } catch (err) {
-    console.error("Verify OTP error:", err);
     res.status(500).json({
       success: false,
       message: err.message,
@@ -369,9 +197,7 @@ exports.verifyOtp = async (req, res) => {
   }
 };
 
-// ============================================================
-// 🔄 RESEND OTP
-// ============================================================
+// ─── RESEND OTP ──────────────────────────────────────────────────────
 exports.resendOtp = async (req, res) => {
   try {
     const { mobile, email, type } = req.body;
@@ -393,17 +219,19 @@ exports.resendOtp = async (req, res) => {
         });
       }
 
-      const otp = user.generateOtp();
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+      user.otp = otp;
+      user.otpExpiry = new Date(Date.now() + 5 * 60 * 1000);
+
       await user.save();
 
       if (user.fcmToken) {
         await admin.messaging().send({
           token: user.fcmToken,
-          notification: {
+          data: {
             title: "OTP Verification",
             body: `Your OTP is ${otp}`,
-          },
-          data: {
             otp: otp,
           },
         });
@@ -455,157 +283,487 @@ exports.resendOtp = async (req, res) => {
         message: "OTP resent successfully",
       });
     }
-
-    return res.status(400).json({
-      success: false,
-      message: "Invalid type specified",
-    });
   } catch (err) {
-    console.error("Resend OTP error:", err);
+    console.error("RESEND OTP ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };
 
-// ============================================================
-// 🔑 FORGOT PASSWORD
-// ============================================================
-exports.forgotPassword = async (req, res) => {
+// ─── REGISTER ────────────────────────────────────────────────────────
+exports.register = async (req, res) => {
   try {
-    const { email } = req.body;
+    const {
+      role,
+      state,
+      district,
+      taluk,
+      name,
+      email,
+      mobile,
+      password,
+      confirmPassword,
+      fcmToken,
+    } = req.body;
 
-    if (!email) {
-      return res.status(400).json({
-        message: "Email is required",
-      });
+    if (!fcmToken) {
+      return res.status(400).json({ message: "FCM token required" });
     }
+
+    if (
+      !role ||
+      !state ||
+      !district ||
+      !taluk ||
+      !name ||
+      !email ||
+      !mobile ||
+      !password
+    ) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match" });
+    }
+
+    const existingUser = await Register.findOne({ mobile });
+    if (existingUser) {
+      return res
+        .status(409)
+        .json({ message: "Mobile number already registered" });
+    }
+
+    const existingEmail = await Register.findOne({ email });
+    if (existingEmail) {
+      return res
+        .status(409)
+        .json({ message: "Email already registered" });
+    }
+
+    // ─── APPROVAL LOGIC ──────────────────────────────────────────────
+    let isApproved = false;
+    let status = 'pending';
+
+    if (role === 'Radnus') {
+      // Radnus requires admin approval
+      isApproved = false;
+      status = 'pending';
+    } else {
+      // Other roles are auto-approved
+      isApproved = true;
+      status = 'approved';
+    }
+
+    const user = new Register({
+      role,
+      state,
+      district,
+      taluk,
+      name,
+      email,
+      mobile,
+      password,
+      fcmToken,
+      isApproved,
+      status,
+      isVerified: false,
+    });
+
+    const otp = user.generateOtp();
+    await user.save();
+
+    // ─── SEND OTP ─────────────────────────────────────────────────────
+    await admin.messaging().send({
+      token: fcmToken,
+      notification: {
+        title: "OTP Verification",
+        body: `Your OTP is ${otp}`,
+      },
+    });
+
+    // ─── NOTIFY ADMIN FOR RADNUS ────────────────────────────────────
+    if (role === 'Radnus') {
+      const admins = await Register.find({ role: 'Admin' });
+      
+      for (const adminUser of admins) {
+        if (adminUser.fcmToken) {
+          await admin.messaging().send({
+            token: adminUser.fcmToken,
+            notification: {
+              title: "New Radnus Registration",
+              body: `${name} (${email}) has registered. Please approve.`,
+            },
+            data: {
+              type: 'new_radnus_registration',
+              userId: user._id.toString(),
+              name: user.name,
+              email: user.email,
+              mobile: user.mobile,
+            }
+          }).catch(err => console.error('Admin notification failed:', err));
+        }
+      }
+    }
+
+    res.status(201).json({
+      message: role === 'Radnus' 
+        ? "Registration successful. Awaiting admin approval."
+        : "Registration successful. OTP sent",
+      userId: user._id,
+      requiresApproval: role === 'Radnus',
+      isApproved: user.isApproved,
+      status: user.status,
+    });
+
+  } catch (error) {
+    console.error("REGISTER ERROR:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ─── LOGIN ───────────────────────────────────────────────────────────
+exports.login = async (req, res) => {
+  try {
+    const { email, password, role } = req.body;
 
     const user = await Register.findOne({ email });
 
     if (!user) {
-      return res.json({
-        success: true,
-        message: "If email exists, OTP sent",
+      return res.status(400).json({ message: "User not found" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    if (user.role !== role) {
+      return res.status(403).json({ message: "Invalid role selected" });
+    }
+
+    if (user.role === 'Radnus' && !user.isApproved) {
+      return res.status(403).json({
+        message: "Account pending admin approval",
+        requiresApproval: true,
+        status: user.status
       });
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
-
-    user.resetOtp = hashedOtp;
-    user.resetOtpExpiry = new Date(Date.now() + 10 * 60 * 1000);
-
-    await user.save();
-
-    await resend.emails.send({
-      from: "Radnus Distribution App <noreply@service.radnus.in>",
-      to: email,
-      subject: "Password Reset OTP",
-      html: `
-        <h2>Password Reset</h2>
-        <p>Your OTP is:</p>
-        <h1>${otp}</h1>
-        <p>This OTP expires in 10 minutes.</p>
-      `,
-    });
-
-    return res.json({
-      success: true,
-      message: "OTP sent to email",
-    });
-  } catch (err) {
-    console.error("Forgot password error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
-  }
-};
-
-// ============================================================
-// ✅ VERIFY RESET OTP
-// ============================================================
-exports.verifyResetOtp = async (req, res) => {
-  try {
-    const { email, otp } = req.body;
-
-    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
-
-    const user = await Register.findOne({
-      email,
-      resetOtp: hashedOtp,
-      resetOtpExpiry: { $gt: Date.now() },
-    });
-
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid or expired OTP",
+    if (!user.isVerified) {
+      return res.status(403).json({
+        message: "Please verify your OTP first",
+        requiresOTP: true
       });
     }
+
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
 
     res.json({
-      success: true,
-      message: "OTP verified",
+      accessToken,
+      refreshToken,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        mobile: user.mobile,
+        role: user.role,
+        state: user.state,
+        district: user.district,
+        taluk: user.taluk,
+        isVerified: user.isVerified,
+        isApproved: user.isApproved
+      }
     });
+
   } catch (err) {
-    console.error("Verify reset OTP error:", err);
+    console.error("LOGIN ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };
 
-// ============================================================
-// 🔄 RESET PASSWORD
-// ============================================================
-exports.resetPassword = async (req, res) => {
+// ─── ADMIN LOGIN ────────────────────────────────────────────────────
+exports.adminLogin = async (req, res) => {
   try {
-    const { email, otp, password } = req.body;
+    const { email, password } = req.body;
 
-    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
-
-    const user = await Register.findOne({
-      email,
-      resetOtp: hashedOtp,
-      resetOtpExpiry: { $gt: Date.now() },
-    });
-
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid or expired OTP",
-      });
+    if (email !== process.env.ADMIN_EMAIL) {
+      return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    // Password will be hashed by pre-save hook
-    user.password = password;
-    user.resetOtp = undefined;
-    user.resetOtpExpiry = undefined;
+    const isMatch = await bcrypt.compare(password, process.env.ADMIN_PASSWORD_HASH);
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
 
-    await user.save();
+    const accessToken = jwt.sign(
+      { email, role: "Admin" },
+      process.env.ACCESS_SECRET,
+      { expiresIn: "15m" }
+    );
+    
+    const refreshToken = jwt.sign(
+      { email, role: "Admin" },
+      process.env.REFRESH_SECRET,
+      { expiresIn: "7d" }
+    );
 
     res.json({
-      success: true,
-      message: "Password reset successful",
+      accessToken,
+      refreshToken,
+      user: {
+        email,
+        role: "Admin"
+      }
     });
+
   } catch (err) {
-    console.error("Reset password error:", err);
     res.status(500).json({ message: err.message });
   }
 };
 
-// ============================================================
-// 📱 GET CURRENT USER (Protected)
-// ============================================================
-exports.getCurrentUser = async (req, res) => {
+// ─── REFRESH TOKEN ──────────────────────────────────────────────────
+exports.refreshToken = async (req, res) => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken) {
+    return res.status(401).json({ message: "No refresh token" });
+  }
+
   try {
-    const user = await Register.findById(req.user.id).select("-password -otp -resetOtp");
+    const decoded = jwt.verify(refreshToken, process.env.REFRESH_SECRET);
+
+    const user = await Register.findById(decoded.id);
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    res.json({ user });
+    const newAccessToken = jwt.sign(
+      { id: user._id, role: user.role },
+      process.env.ACCESS_SECRET,
+      { expiresIn: "15m" }
+    );
+
+    res.json({ accessToken: newAccessToken });
+
   } catch (err) {
-    console.error("Get current user error:", err);
+    console.log("Refresh error:", err.message);
+    res.status(403).json({ message: "Invalid refresh token" });
+  }
+};
+
+// ─── ADMIN APPROVAL FUNCTIONS ──────────────────────────────────────
+
+exports.approveRadnus = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const adminId = req.user.id;
+
+    const adminUser = await Register.findById(adminId);
+    if (!adminUser || adminUser.role !== 'Admin') {
+      return res.status(403).json({ 
+        message: "Only Admin can approve Radnus users" 
+      });
+    }
+
+    const user = await Register.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (user.role !== 'Radnus') {
+      return res.status(400).json({ 
+        message: "Only Radnus users require admin approval" 
+      });
+    }
+
+    if (user.isApproved) {
+      return res.status(400).json({ 
+        message: "User is already approved" 
+      });
+    }
+
+    user.isApproved = true;
+    user.status = 'approved';
+    user.approvedBy = adminId;
+    user.approvedAt = new Date();
+    user.updatedAt = new Date();
+
+    await user.save();
+
+    if (user.fcmToken) {
+      await admin.messaging().send({
+        token: user.fcmToken,
+        notification: {
+          title: "Account Approved",
+          body: "Your Radnus account has been approved by Admin. Please verify OTP to complete registration.",
+        }
+      }).catch(err => console.error('Notification failed:', err));
+    }
+
+    res.json({
+      success: true,
+      message: "Radnus user approved successfully",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        mobile: user.mobile,
+        status: user.status,
+        isApproved: user.isApproved
+      }
+    });
+
+  } catch (err) {
+    console.error("APPROVAL ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.rejectRadnus = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { rejectionReason } = req.body;
+    const adminId = req.user.id;
+
+    const adminUser = await Register.findById(adminId);
+    if (!adminUser || adminUser.role !== 'Admin') {
+      return res.status(403).json({ 
+        message: "Only Admin can reject Radnus users" 
+      });
+    }
+
+    const user = await Register.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (user.role !== 'Radnus') {
+      return res.status(400).json({ 
+        message: "Only Radnus users can be rejected" 
+      });
+    }
+
+    if (user.isApproved) {
+      return res.status(400).json({ 
+        message: "User is already approved, cannot reject" 
+      });
+    }
+
+    user.status = 'rejected';
+    user.rejectionReason = rejectionReason || 'No reason provided';
+    user.updatedAt = new Date();
+
+    await user.save();
+
+    if (user.fcmToken) {
+      await admin.messaging().send({
+        token: user.fcmToken,
+        notification: {
+          title: "Account Rejected",
+          body: `Your Radnus account was rejected. Reason: ${user.rejectionReason}`,
+        }
+      }).catch(err => console.error('Notification failed:', err));
+    }
+
+    res.json({
+      success: true,
+      message: "Radnus user rejected",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        status: user.status,
+        rejectionReason: user.rejectionReason
+      }
+    });
+
+  } catch (err) {
+    console.error("REJECTION ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.getPendingRadnusUsers = async (req, res) => {
+  try {
+    const adminId = req.user.id;
+
+    const adminUser = await Register.findById(adminId);
+    if (!adminUser || adminUser.role !== 'Admin') {
+      return res.status(403).json({ 
+        message: "Only Admin can view pending Radnus users" 
+      });
+    }
+
+    const pendingUsers = await Register.find({
+      role: 'Radnus',
+      status: 'pending',
+      isApproved: false
+    }).select('-password -otp -resetOtp -resetOtpExpiry');
+
+    res.json({
+      success: true,
+      count: pendingUsers.length,
+      users: pendingUsers
+    });
+
+  } catch (err) {
+    console.error("FETCH PENDING ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.getAllRadnusUsers = async (req, res) => {
+  try {
+    const adminId = req.user.id;
+
+    const adminUser = await Register.findById(adminId);
+    if (!adminUser || adminUser.role !== 'Admin') {
+      return res.status(403).json({ 
+        message: "Only Admin can view Radnus users" 
+      });
+    }
+
+    const radnusUsers = await Register.find({
+      role: 'Radnus'
+    }).select('-password -otp -resetOtp -resetOtpExpiry')
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      count: radnusUsers.length,
+      users: radnusUsers
+    });
+
+  } catch (err) {
+    console.error("FETCH ALL RADNUS ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.getPendingCount = async (req, res) => {
+  try {
+    const adminId = req.user.id;
+
+    const adminUser = await Register.findById(adminId);
+    if (!adminUser || adminUser.role !== 'Admin') {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    const pendingCount = await Register.countDocuments({
+      role: 'Radnus',
+      status: 'pending',
+      isApproved: false
+    });
+
+    res.json({
+      success: true,
+      pendingCount
+    });
+
+  } catch (err) {
+    console.error("PENDING COUNT ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };

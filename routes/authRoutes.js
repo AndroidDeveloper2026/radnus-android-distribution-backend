@@ -1,36 +1,47 @@
+// routes/authRoutes.js
 const express = require("express");
 const router = express.Router();
 const authController = require("../controllers/authController");
 const auth = require("../middleware/authMiddleware");
 
-// 🔓 PUBLIC ROUTES
+// ─── PUBLIC ROUTES ──────────────────────────────────────────────────
 router.post("/register", authController.register);
 router.post("/login", authController.login);
-router.post("/admin", authController.adminLogin);
-
-// OTP
 router.post("/verify-otp", authController.verifyOtp);
 router.post("/resend-otp", authController.resendOtp);
-
-// PASSWORD RESET
 router.post("/forgot-password", authController.forgotPassword);
 router.post("/verify-reset-otp", authController.verifyResetOtp);
 router.post("/reset-password", authController.resetPassword);
-
-// 🔄 TOKEN REFRESH
+router.post("/admin", authController.adminLogin);
 router.post("/refresh", authController.refreshToken);
 
-// 🔐 PROTECTED ROUTES
+// ─── ADMIN-ONLY ROUTES (Protected) ────────────────────────────────
+router.get("/radnus/pending", auth, authController.getPendingRadnusUsers);
+router.get("/radnus/all", auth, authController.getAllRadnusUsers);
+router.get("/radnus/pending-count", auth, authController.getPendingCount);
+router.put("/radnus/approve/:userId", auth, authController.approveRadnus);
+router.put("/radnus/reject/:userId", auth, authController.rejectRadnus);
+
+// ─── PROTECTED ROUTES ──────────────────────────────────────────────
 router.get("/profile", auth, (req, res) => {
-  res.json({
-    msg: "User profile",
-    user: req.user,
-  });
+  res.json({ msg: "User profile", user: req.user });
 });
 
-router.get("/me", auth, authController.getCurrentUser);
+router.get('/me', auth, async (req, res) => {
+  try {
+    const user = await Register.findById(req.user.id).select('-password');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json({ user });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
 module.exports = router;
+
+//-------------------------------------------------
 
 // // const express = require("express");
 // // const router = express.Router();
