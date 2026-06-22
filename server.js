@@ -52,8 +52,6 @@ startAutoEndJob();
 // ✅ API ROUTES
 console.log("🔗 Registering API routes...");
 app.use("/api/auth", require("./routes/authRoutes"));
-//new add
-app.use("/api/admin/registrations", require("./routes/adminApprovalRoutes"));
 app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/territory", require("./routes/territoryRoutes"));
 app.use("/api/distributors", require("./routes/distributorRoutes"));
