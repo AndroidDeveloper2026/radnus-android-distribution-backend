@@ -1,3 +1,4 @@
+
 // controllers/authController.js
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -86,8 +87,9 @@ exports.register = async (req, res) => {
         .json({ message: "Mobile number already registered" });
     }
 
-    // ⭐ Check if role requires approval
-    const rolesRequiringApproval = ['Radnus', 'FSE', 'Distributor', 'Retailer'];
+    // ⭐ Approval-based registration is ONLY for the Radnus Employee Login.
+    // All other roles keep their existing (auto-approved) behavior.
+    const rolesRequiringApproval = ['Radnus'];
     const requiresApproval = rolesRequiringApproval.includes(role);
 
     // Save user
@@ -298,16 +300,17 @@ exports.login = async (req, res) => {
       return res.status(400).json({ message: "User not found" });
     }
 
-    // ⭐ Check if account is approved
-    if (!user.isApproved) {
+    // ⭐ Approval gate applies ONLY to the Radnus Employee Login.
+    // Other roles/modules are unaffected and login proceeds as before.
+    if (user.role === 'Radnus' && !user.isApproved) {
       if (user.approvalStatus === 'pending') {
-        return res.status(403).json({ 
-          message: "Account pending admin approval",
+        return res.status(403).json({
+          message: "Your account is awaiting admin approval.",
           approvalStatus: 'pending'
         });
       } else if (user.approvalStatus === 'rejected') {
-        return res.status(403).json({ 
-          message: `Account rejected: ${user.rejectionReason || 'No reason provided'}`,
+        return res.status(403).json({
+          message: "Your registration has been rejected. Please contact the administrator.",
           approvalStatus: 'rejected'
         });
       }
@@ -528,7 +531,6 @@ exports.refreshToken = async (req, res) => {
     res.status(403).json({ message: "Invalid refresh token" });
   }
 };
-
 //+++++++++++++++++++++++++++++++++++++++++
 
 // const bcrypt = require("bcrypt");
