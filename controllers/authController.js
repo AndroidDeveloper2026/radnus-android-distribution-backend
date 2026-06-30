@@ -10,27 +10,33 @@ const resend = require("../config/resend");
 const {
   getApproverRole,
   requiresApproval,
-  requiresParentSelection,
   ROLE_LABELS,
 } = require("../utils/roleHierarchy");
 
-// Helper function to notify admins about new registration
-async function notifyAdminsAboutNewRegistration(user) {
+// Notify every active/approved user holding `approverRole` that a new
+// registration in `user.role` needs their review. Works for Admin and
+// for every other approver role (Marketing Manager, Distributor, FSE) —
+// no specific individual is pre-assigned, so all eligible approvers of
+// that role are notified.
+async function notifyApproversAboutNewRegistration(approverRole, user) {
   try {
-    const admins = await Register.find({ 
-      role: 'Admin',
-      isApproved: true,
-      isVerified: true,
-      fcmToken: { $ne: null }
-    });
+    const filter = { role: approverRole, fcmToken: { $ne: null } };
+    if (approverRole !== 'Admin') {
+      filter.approvalStatus = 'approved';
+    } else {
+      filter.isApproved = true;
+      filter.isVerified = true;
+    }
 
-    for (const adminUser of admins) {
-      if (adminUser.fcmToken) {
+    const approvers = await Register.find(filter);
+
+    for (const approverUser of approvers) {
+      if (approverUser.fcmToken) {
         await admin.messaging().send({
-          token: adminUser.fcmToken,
+          token: approverUser.fcmToken,
           notification: {
             title: "🔔 New Registration Pending Approval",
-            body: `${user.name} (${user.role}) needs approval.`,
+            body: `${user.name} (${ROLE_LABELS[user.role] || user.role}) needs approval.`,
           },
           data: {
             type: 'registration_approval',
@@ -41,31 +47,9 @@ async function notifyAdminsAboutNewRegistration(user) {
         });
       }
     }
-    console.log(`🔔 Notified ${admins.length} admins about new registration`);
+    console.log(`🔔 Notified ${approvers.length} ${approverRole}(s) about new registration`);
   } catch (error) {
-    console.error("Failed to notify admins:", error);
-  }
-}
-
-// Helper function to notify a specific parent/approver about a new registration
-async function notifyParentAboutNewRegistration(parentUser, childUser) {
-  try {
-    if (!parentUser || !parentUser.fcmToken) return;
-    await admin.messaging().send({
-      token: parentUser.fcmToken,
-      notification: {
-        title: "🔔 New Registration Pending Approval",
-        body: `${childUser.name} (${ROLE_LABELS[childUser.role] || childUser.role}) needs your approval.`,
-      },
-      data: {
-        type: "registration_approval",
-        userId: childUser._id.toString(),
-        role: childUser.role,
-        name: childUser.name,
-      },
-    });
-  } catch (error) {
-    console.error("Failed to notify parent approver:", error);
+    console.error("Failed to notify approvers:", error);
   }
 }
 
@@ -83,7 +67,6 @@ exports.register = async (req, res) => {
       password,
       confirmPassword,
       fcmToken,
-      parentId, // ⭐ specific approver chosen by the user (Distributor / MarketingExecutive / FSE / Retailer)
     } = req.body;
 
     if (!fcmToken) {
@@ -117,41 +100,11 @@ exports.register = async (req, res) => {
     }
 
     // ⭐ Hierarchical approval-based registration applies to EVERY role
-    // except Admin. Admin accounts never require approval.
+    // except Admin. Admin accounts never require approval. No specific
+    // parent/individual needs to be picked — any user holding the
+    // correct approver role can review and approve the request.
     const needsApproval = requiresApproval(role);
     const approverRole = getApproverRole(role);
-
-    let resolvedParentId = null;
-
-    if (needsApproval) {
-      if (requiresParentSelection(role)) {
-        // Roles like Distributor / MarketingExecutive / FSE / Retailer can
-        // have many possible approvers, so the user must pick one.
-        if (!parentId) {
-          return res.status(400).json({
-            message: `Please select the ${ROLE_LABELS[approverRole] || approverRole} who will approve your registration`,
-          });
-        }
-
-        const parentUser = await Register.findById(parentId);
-        if (!parentUser || parentUser.role !== approverRole) {
-          return res.status(400).json({
-            message: `Selected approver is invalid. Please choose a valid ${ROLE_LABELS[approverRole] || approverRole}`,
-          });
-        }
-        if (parentUser.role !== 'Admin' && parentUser.approvalStatus !== 'approved') {
-          return res.status(400).json({
-            message: `Selected ${ROLE_LABELS[approverRole] || approverRole} is not yet approved and cannot accept new registrations`,
-          });
-        }
-
-        resolvedParentId = parentUser._id;
-      } else {
-        // Radnus Employee / Marketing Manager are approved directly by
-        // any Admin — no specific parent selection required.
-        resolvedParentId = null;
-      }
-    }
 
     // Save user
     const user = new Register({
@@ -167,7 +120,6 @@ exports.register = async (req, res) => {
       approvalStatus: needsApproval ? 'pending' : 'approved',
       isApproved: !needsApproval,
       isVerified: false,
-      parentId: resolvedParentId,
     });
 
     const otp = user.generateOtp();
@@ -182,15 +134,10 @@ exports.register = async (req, res) => {
       },
     });
 
-    // ⭐ If approval required, notify the appropriate approver(s)
+    // ⭐ If approval required, notify every approver holding the
+    // correct approver role for this registration.
     if (needsApproval) {
-      if (resolvedParentId) {
-        const parentUser = await Register.findById(resolvedParentId);
-        await notifyParentAboutNewRegistration(parentUser, user);
-      } else {
-        // approverRole === 'Admin' with no specific parent selected
-        await notifyAdminsAboutNewRegistration(user);
-      }
+      await notifyApproversAboutNewRegistration(approverRole, user);
     }
 
     res.status(201).json({
@@ -655,6 +602,7 @@ exports.refreshToken = async (req, res) => {
     res.status(403).json({ message: "Invalid refresh token" });
   }
 };
+
 //__________________________________________________________
 
 // // controllers/authController.js

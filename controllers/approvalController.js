@@ -1,3 +1,4 @@
+
 const mongoose = require('mongoose');
 const Register = require('../models/Register');
 const admin = require('../config/firebaseAdmin');
@@ -10,7 +11,10 @@ function isValidObjectId(id) {
 }
 
 // Build the mongo filter representing "users this approver is allowed to
-// see/manage", based on their JWT role/id.
+// see/manage", based on their JWT role. Every approver role (Admin,
+// Marketing Manager, Distributor, FSE) sees ALL pending/processed
+// requests for their child role(s) — no specific parent/individual is
+// pre-assigned during registration.
 function buildScopeFilter(reqUser) {
   const childRoles = getChildRoles(reqUser.role);
 
@@ -18,18 +22,7 @@ function buildScopeFilter(reqUser) {
     return null; // this role does not approve anyone
   }
 
-  if (reqUser.role === 'Admin') {
-    // Admin approves Radnus Employees and Marketing Managers system-wide
-    // (no specific parent selection happens for these roles), regardless
-    // of whether this admin has a Register document or is the env-based
-    // super-admin.
-    return { role: { $in: childRoles } };
-  }
-
-  // Every other approver only manages users who explicitly chose them
-  // as their parent during registration — requires a real DB id.
-  if (!isValidObjectId(reqUser.id)) return null;
-  return { role: { $in: childRoles }, parentId: reqUser.id };
+  return { role: { $in: childRoles } };
 }
 
 // GET /api/approvals/pending
@@ -82,16 +75,9 @@ function isAuthorizedApprover(reqUser, targetUser) {
   const expectedApproverRole = getApproverRole(targetUser.role);
   if (expectedApproverRole !== reqUser.role) return false;
 
-  if (reqUser.role === 'Admin') {
-    return true; // Admin can approve any Radnus/MarketingManager request
-  }
-
-  // All other approvers may only act on users who picked them as parent
-  return (
-    isValidObjectId(reqUser.id) &&
-    targetUser.parentId &&
-    targetUser.parentId.equals(reqUser.id)
-  );
+  // Any user holding the correct approver role may act on this request —
+  // visibility/authorization is role-based, not assigned-individual-based.
+  return true;
 }
 
 // POST /api/approvals/approve/:userId
@@ -228,9 +214,9 @@ exports.getMyTeam = async (req, res) => {
   }
 };
 
-// GET /api/approvals/view/:userId — single user detail, scoped so an
-// approver can only view users within their own hierarchy branch
-// (Admin can view anyone).
+// GET /api/approvals/view/:userId — single user detail. Admin can view
+// anyone; other approvers can view themselves or any user in a child
+// role of theirs (role-based, same as the approval scope).
 exports.viewUserDetails = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -242,10 +228,11 @@ exports.viewUserDetails = async (req, res) => {
       return res.json(targetUser);
     }
 
-    if (
-      (isValidObjectId(req.user.id) && targetUser._id.equals(req.user.id)) ||
-      (isValidObjectId(req.user.id) && targetUser.parentId && targetUser.parentId.equals(req.user.id))
-    ) {
+    const childRoles = getChildRoles(req.user.role);
+    const isSelf = isValidObjectId(req.user.id) && targetUser._id.equals(req.user.id);
+    const isChildRole = childRoles.includes(targetUser.role);
+
+    if (isSelf || isChildRole) {
       return res.json(targetUser);
     }
 
