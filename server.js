@@ -70,6 +70,8 @@ app.use("/api/activity-logs", require("./routes/activityLogRoutes"));
 app.use("/api/profile", require("./routes/profileRoutes"));
 app.use("/api/sales-returns", require("./routes/salesReturnRoutes"));
 app.use("/api/purchase-returns", require("./routes/purchaseReturnRoutes"));
+app.use("/api/suppliers", require("./routes/supplierRoutes"));
+app.use("/api/purchases", require("./routes/purchaseRoutes"));
 console.log("✅ All routes registered");
 
 // ✅ CREATE HTTP SERVER & ATTACH SOCKET.IO
