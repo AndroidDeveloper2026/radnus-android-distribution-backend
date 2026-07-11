@@ -386,14 +386,62 @@ exports.getNonMovingStock = async (req, res) => {
 
 // ─── Price History (per product, across all past purchases) ─────────────────
 
+// exports.getPriceHistory = async (req, res) => {
+//   try {
+//     const { productId } = req.params;
+//     if (!productId) return res.status(400).json({ msg: "productId is required" });
+
+//     const entries = await PurchaseEntry.find({ "products.productId": productId })
+//       .populate("supplier", "name")
+//       .sort({ invoiceDate: -1, createdAt: -1 });
+
+//     const history = entries.flatMap((entry) =>
+//       entry.products
+//         .filter((p) => String(p.productId) === String(productId))
+//         .map((p) => ({
+//           purchaseNumber: entry.purchaseNumber,
+//           invoiceNumber: entry.invoiceNumber,
+//           invoiceDate: entry.invoiceDate,
+//           supplierName: entry.supplier?.name || "—",
+//           quantity: p.quantity,
+//           purchasePrice: p.purchasePrice,
+//           mrp: p.mrp,
+//           gst: p.gst,
+//           itemCost: p.itemCost ?? null,
+//           distributorPrice: p.distributorPrice ?? null,
+//           retailerPrice: p.retailerPrice ?? null,
+//           walkinPrice: p.walkinPrice ?? null,
+//           batchNo: p.batchNo,
+//         }))
+//     );
+
+//     res.json(history);
+//   } catch (err) {
+//     console.error("getPriceHistory error:", err);
+//     res.status(500).json({ msg: err.message });
+//   }
+// };
+
 exports.getPriceHistory = async (req, res) => {
   try {
     const { productId } = req.params;
     if (!productId) return res.status(400).json({ msg: "productId is required" });
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ msg: `"${productId}" is not a valid product id` });
+    }
 
-    const entries = await PurchaseEntry.find({ "products.productId": productId })
+    // Cast explicitly rather than relying on Mongoose to auto-cast a plain
+    // string against a nested array subdocument field — safer and removes
+    // any doubt about whether the match actually runs against an ObjectId.
+    const productObjectId = new mongoose.Types.ObjectId(productId);
+
+    const entries = await PurchaseEntry.find({ "products.productId": productObjectId })
       .populate("supplier", "name")
       .sort({ invoiceDate: -1, createdAt: -1 });
+
+    console.log(
+      `[getPriceHistory] productId=${productId} → matched ${entries.length} purchase entr${entries.length === 1 ? "y" : "ies"}`
+    );
 
     const history = entries.flatMap((entry) =>
       entry.products
