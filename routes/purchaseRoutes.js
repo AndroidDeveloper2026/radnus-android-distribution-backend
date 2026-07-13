@@ -11,18 +11,19 @@ const {
   getStockAging,
   getNonMovingStock,
   getPriceHistory,
-  getProductPriceHistory, // NEW
+  getProductPriceHistory,
 } = require("../controllers/purchaseController");
 
 router.post("/", auth, createPurchaseEntry);
 router.get("/", auth, getPurchaseEntries);
 
-// Report routes
+// Report routes - must be declared before "/:id" route
 router.get("/stock-aging", auth, getStockAging);
 router.get("/non-moving-stock", auth, getNonMovingStock);
 router.get("/price-history/:productId", auth, getPriceHistory);
-router.get("/product-price-history/:productId", auth, getProductPriceHistory); // NEW
+router.get("/product-price-history/:productId", auth, getProductPriceHistory);
 
+// Single purchase routes
 router.get("/:id", auth, getPurchaseEntryById);
 router.put("/:id", auth, updatePurchaseEntry);
 
