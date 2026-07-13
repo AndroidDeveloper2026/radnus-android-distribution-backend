@@ -31,6 +31,7 @@ const createInvoice = async (req, res) => {
       salesperson,
       referenceNo,
       invoiceDate,
+      orderType,
     } = req.body;
 
     if (!customerPhone || !customerName || !items || !items.length || !totalAmount || !paymentMode) {
@@ -67,6 +68,7 @@ const createInvoice = async (req, res) => {
       salesperson: salesperson || "",
       referenceNo: referenceNo || "",
       invoiceDate: invoiceDate || new Date(),
+      orderType: orderType || '', 
     });
 
     res.status(201).json({

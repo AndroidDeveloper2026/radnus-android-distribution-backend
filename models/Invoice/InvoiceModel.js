@@ -89,7 +89,11 @@ const InvoiceSchema = new mongoose.Schema(
 
     customerPhone: { type: String, required: true },
     customerName: { type: String, required: true },
-    customerType: { type: String, enum: ["customer", "shop"], default: "customer" },
+    customerType: {
+      type: String,
+      enum: ["customer", "shop"],
+      default: "customer",
+    },
     shopName: { type: String },
     customerAddress: { type: String },
     customerCity: { type: String },
@@ -99,13 +103,18 @@ const InvoiceSchema = new mongoose.Schema(
     shippingAddress: { type: ShippingAddressSchema, default: {} },
 
     subtotal: { type: Number, required: true },
-    discount: { type: Number, default: 0 },    // ✅ DISCOUNT
+    discount: { type: Number, default: 0 }, // ✅ DISCOUNT
     courierCharge: { type: Number, default: 0 },
     salesperson: { type: String },
     referenceNo: { type: String },
     invoiceDate: { type: Date, default: Date.now },
+    orderType: {
+      type: String,
+      enum: ["OEM", "TOOLS"],
+      default: "",
+    },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 module.exports = mongoose.model("Invoice", InvoiceSchema);
