@@ -20,9 +20,7 @@ const numOrUndefined = (v) => {
   return Number.isNaN(n) ? undefined : n;
 };
 
-// e.g. RC2026-2027/PUC/001 — "RC" + Indian financial year (Apr–Mar) of the
-// invoice date + "/PUC/" (Purchase module code) + a 3-digit sequence that
-// resets every financial year.
+// Indian financial year (Apr–Mar) for a given date, e.g. "2026-2027"
 function getFinancialYear(date) {
   const d = date ? new Date(date) : new Date();
   const y = d.getFullYear();
@@ -30,19 +28,37 @@ function getFinancialYear(date) {
   return `${fyStart}-${fyStart + 1}`;
 }
 
-async function generatePurchaseNumber(session, date) {
-  const fy = getFinancialYear(date);
-  const prefix = `RC${fy}/PUC/`;
-  const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
-  const regex = new RegExp(`^${escapedPrefix}(\\d+)$`);
-
-  const last = await PurchaseEntry.findOne({ purchaseNumber: regex })
+// e.g. PUR00045 — reads the last created purchase and increments its suffix
+async function generatePurchaseNumber(session) {
+  const last = await PurchaseEntry.findOne({})
     .sort({ createdAt: -1 })
     .session(session || null);
 
   let nextSeq = 1;
   if (last?.purchaseNumber) {
     const match = last.purchaseNumber.match(/(\d+)$/);
+    if (match) nextSeq = parseInt(match[1], 10) + 1;
+  }
+  return `PUR${String(nextSeq).padStart(5, "0")}`;
+}
+
+// e.g. RC2026-2027/PUC/001 — "RC" + Indian financial year (Apr–Mar) of the
+// invoice date + "/PUC/" (Purchase module code) + a 3-digit sequence that
+// resets every financial year. This is the auto-generated Invoice Number
+// (replaces manual entry — see runPurchaseSave).
+async function generateInvoiceNumber(session, date) {
+  const fy = getFinancialYear(date);
+  const prefix = `RC${fy}/PUC/`;
+  const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  const regex = new RegExp(`^${escapedPrefix}(\\d+)$`);
+
+  const last = await PurchaseEntry.findOne({ invoiceNumber: regex })
+    .sort({ createdAt: -1 })
+    .session(session || null);
+
+  let nextSeq = 1;
+  if (last?.invoiceNumber) {
+    const match = last.invoiceNumber.match(/(\d+)$/);
     if (match) nextSeq = parseInt(match[1], 10) + 1;
   }
   return `${prefix}${String(nextSeq).padStart(3, "0")}`;
@@ -102,7 +118,6 @@ function computeAverageCost(product, qty, purchasePrice) {
 async function runPurchaseSave(body, createdBy, session) {
   const {
     supplier,
-    invoiceNumber,
     invoiceDate,
     paymentType,
     remarks,
@@ -112,7 +127,6 @@ async function runPurchaseSave(body, createdBy, session) {
   } = body;
 
   if (!supplier) throw new Error("Supplier is required");
-  if (!invoiceNumber) throw new Error("Invoice number is required");
   if (!invoiceDate) throw new Error("Invoice date is required");
   if (!Array.isArray(products) || !products.length) {
     throw new Error("At least one product line is required");
@@ -208,7 +222,8 @@ async function runPurchaseSave(body, createdBy, session) {
   const due = round2(grandTotal - paid);
   const paymentStatus = due <= 0 ? "paid" : paid > 0 ? "partial" : "unpaid";
 
-  const purchaseNumber = await generatePurchaseNumber(session, invoiceDate);
+  const purchaseNumber = await generatePurchaseNumber(session);
+  const invoiceNumber = await generateInvoiceNumber(session, invoiceDate);
 
   const created = await PurchaseEntry.create(
     [
