@@ -1,18 +1,19 @@
-// locationRoutes.js
 const express = require("express");
 const router = express.Router();
 const Location = require("../models/LocationModel/Location");
 const Session = require("../models/FSEModel/Session");
 const calculateDistance = require("../utils/distance");
 
-const MAX_JUMP_METERS = 500;
-const MAX_JUMP_WINDOW_MS = 5000;
-const MAX_PLAUSIBLE_SPEED_MPS = 55;
-const DUPLICATE_WINDOW_MS = 5000;
-const DUPLICATE_DISTANCE_METERS = 2;
+// ── Constants for GPS filtering / dedup ─────────────────────────────────────
+const MAX_JUMP_METERS = 500;       // reject jumps larger than this within MAX_JUMP_WINDOW_MS
+const MAX_JUMP_WINDOW_MS = 5000;   // 5 seconds
+const MAX_PLAUSIBLE_SPEED_MPS = 55; // ~200 km/h ceiling for FSE ground travel
+const DUPLICATE_WINDOW_MS = 5000;   // 5 seconds
+const DUPLICATE_DISTANCE_METERS = 2; // treat as same point if within 2 meters
 
 const kmToMeters = km => km * 1000;
 
+// ── Determine if a new point should be rejected as a GPS jump/glitch ────────
 function isImpossibleJump(prevPoint, latitude, longitude, timestamp) {
   if (!prevPoint) return { reject: false };
 
@@ -33,10 +34,12 @@ function isImpossibleJump(prevPoint, latitude, longitude, timestamp) {
 
   const speedMps = distanceMeters / dtSeconds;
 
+  // ✅ Reject if jump > 500m within a 5s window
   if (distanceMeters > MAX_JUMP_METERS && dtMs <= MAX_JUMP_WINDOW_MS) {
     return { reject: true, reason: 'GPS jump exceeds 500m within 5s', distanceMeters, speedMps };
   }
 
+  // ✅ Reject physically impossible speeds
   if (speedMps > MAX_PLAUSIBLE_SPEED_MPS) {
     return { reject: true, reason: 'Implausible speed', distanceMeters, speedMps };
   }
@@ -44,6 +47,7 @@ function isImpossibleJump(prevPoint, latitude, longitude, timestamp) {
   return { reject: false, distanceMeters, speedMps };
 }
 
+// ── Determine if a point is a duplicate of the last saved point ────────────
 function isDuplicatePoint(prevPoint, latitude, longitude, timestamp) {
   if (!prevPoint) return false;
 
@@ -61,16 +65,25 @@ function isDuplicatePoint(prevPoint, latitude, longitude, timestamp) {
   return distanceMeters <= DUPLICATE_DISTANCE_METERS;
 }
 
+// ── Core point-processing logic shared by single + batch endpoints ─────────
 async function processLocationPoint({ userId, sessionId, latitude, longitude, timestamp }) {
   const session = await Session.findById(sessionId);
   if (!session) {
     return { status: 404, body: { message: 'Session not found' } };
   }
 
+  // ✅ The session's LOCKED startLocation is always the true anchor point.
+  //    route[0] is written once at /session/start and mirrors startLocation —
+  //    if the route array is ever empty (defensive fallback only; this should
+  //    not normally happen), fall back to startLocation itself so a stray
+  //    update can never be mistaken for a brand-new "first" point.
   const lastRoutePoint = session.route.length > 0
     ? session.route[session.route.length - 1]
-    : null;
+    : session.startLocation
+      ? { latitude: session.startLocation.latitude, longitude: session.startLocation.longitude, timestamp: session.startTime }
+      : null;
 
+  // ✅ Deduplication check
   if (isDuplicatePoint(lastRoutePoint, latitude, longitude, timestamp)) {
     return {
       status: 200,
@@ -83,6 +96,7 @@ async function processLocationPoint({ userId, sessionId, latitude, longitude, ti
     };
   }
 
+  // ✅ GPS jump / impossible-movement filter
   const jumpCheck = isImpossibleJump(lastRoutePoint, latitude, longitude, timestamp);
   if (jumpCheck.reject) {
     console.log(`⚠️ Rejected GPS point for session ${sessionId}: ${jumpCheck.reason}`);
@@ -97,6 +111,7 @@ async function processLocationPoint({ userId, sessionId, latitude, longitude, ti
     };
   }
 
+  // ✅ Save location to Location collection
   const location = await Location.create({
     userId,
     sessionId,
@@ -105,6 +120,7 @@ async function processLocationPoint({ userId, sessionId, latitude, longitude, ti
     timestamp: timestamp || new Date(),
   });
 
+  // ✅ Calculate distance from previous location
   let distanceIncrement = 0;
   if (lastRoutePoint) {
     distanceIncrement = calculateDistance(
@@ -114,7 +130,7 @@ async function processLocationPoint({ userId, sessionId, latitude, longitude, ti
       longitude,
     );
 
-    if (distanceIncrement > 0.001) {
+    if (distanceIncrement > 0.001) { // ~1 meter minimum
       session.totalDistanceKm += distanceIncrement;
     }
   }
@@ -138,6 +154,7 @@ async function processLocationPoint({ userId, sessionId, latitude, longitude, ti
   };
 }
 
+// ✅ UPDATE LOCATION AND CALCULATE DISTANCE
 router.post("/update", async (req, res) => {
   try {
     const { userId, sessionId, latitude, longitude, timestamp } = req.body;
@@ -165,6 +182,7 @@ router.post("/update", async (req, res) => {
   }
 });
 
+// ✅ BATCH SYNC — used by the app to flush points queued while offline
 router.post("/batch-sync", async (req, res) => {
   try {
     const { points } = req.body;
@@ -173,6 +191,7 @@ router.post("/batch-sync", async (req, res) => {
       return res.status(400).json({ message: "points array is required" });
     }
 
+    // ✅ Process in chronological order so distance/jump checks stay meaningful
     const sorted = [...points].sort(
       (a, b) => new Date(a.timestamp) - new Date(b.timestamp),
     );
@@ -208,6 +227,7 @@ router.post("/batch-sync", async (req, res) => {
   }
 });
 
+// ✅ GET ALL LOCATIONS FOR SESSION
 router.get("/session/:sessionId", async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -239,6 +259,7 @@ router.get("/session/:sessionId", async (req, res) => {
   }
 });
 
+// ✅ GET USER LOCATIONS
 router.get("/user/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
@@ -256,6 +277,7 @@ router.get("/user/:userId", async (req, res) => {
   }
 });
 
+// ✅ CLEAN UP DUPLICATE POINTS FOR A SESSION (maintenance utility)
 router.post("/cleanup-duplicates/:sessionId", async (req, res) => {
   try {
     const { sessionId } = req.params;

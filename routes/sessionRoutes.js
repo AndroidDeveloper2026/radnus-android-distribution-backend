@@ -1,13 +1,19 @@
-// sessionRoutes.js
 const express = require('express');
 const router = express.Router();
 const Session = require('../models/FSEModel/Session');
 const Location = require('../models/LocationModel/Location');
 const calculateDistance = require('../utils/distance');
 
-const STALE_SESSION_HOURS = 24;
-const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+// ✅ NOTE: Add your auth middleware here, e.g.:
+// const authMiddleware = require('../middleware/auth');
+// router.use(authMiddleware);
 
+const STALE_SESSION_HOURS = 24;
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // run cleanup every hour
+
+// ─── ORPHANED / STALE SESSION CLEANUP ────────────────────────────────────────
+// Ends any ACTIVE session that has been running longer than STALE_SESSION_HOURS,
+// and marks it AUTO_ENDED so it doesn't block the user from starting a new day.
 async function cleanupStaleSessions() {
   try {
     const cutoff = new Date(Date.now() - STALE_SESSION_HOURS * 60 * 60 * 1000);
@@ -20,6 +26,7 @@ async function cleanupStaleSessions() {
     if (staleSessions.length === 0) return;
 
     for (const session of staleSessions) {
+      // ✅ Best-effort distance recalculation before auto-ending
       let totalDistanceKm = session.totalDistanceKm || 0;
       try {
         const locations = await Location.find({ sessionId: session._id })
@@ -54,9 +61,12 @@ async function cleanupStaleSessions() {
   }
 }
 
+// ✅ Run cleanup once on module load, then on a recurring interval.
+//    This keeps the fix self-contained without requiring a separate cron setup.
 cleanupStaleSessions();
 setInterval(cleanupStaleSessions, CLEANUP_INTERVAL_MS);
 
+// ─── GET ALL SESSIONS (paginated) ────────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
     console.log('📥 GET /api/session called');
@@ -75,6 +85,7 @@ router.get('/', async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
+        // ✅ Trim heavy route arrays from the list view; full route is fetched via /:sessionId
         .select('-route'),
       Session.countDocuments(filter),
     ]);
@@ -95,6 +106,8 @@ router.get('/', async (req, res) => {
   }
 });
 
+// ─── CHECK TODAY'S SESSION ───────────────────────────────────────────────────
+// ✅ Must come before /:sessionId to avoid "today" being passed to findById
 router.get('/today/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -126,6 +139,7 @@ router.get('/today/:userId', async (req, res) => {
   }
 });
 
+// ─── ORPHANED SESSION CHECK (for app-start recovery) ─────────────────────────
 router.get('/orphaned/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -153,6 +167,7 @@ router.get('/orphaned/:userId', async (req, res) => {
   }
 });
 
+// ─── START SESSION ───────────────────────────────────────────────────────────
 router.post('/start', async (req, res) => {
   try {
     const { userId, latitude, longitude } = req.body;
@@ -191,14 +206,16 @@ router.post('/start', async (req, res) => {
     });
 
     if (existingSession) {
+      // ✅ A session for today already exists — its startLocation was LOCKED
+      //    the moment it was created and must never be touched here again.
       console.log(`⚠️ Session already exists for today - sessionId: ${existingSession._id}`);
       return res.json(existingSession);
     }
 
-    const lockedStartLocation = {
-      latitude: lat,
-      longitude: lng,
-    };
+    // ✅ LOCK the start location permanently at creation time. startLocation
+    //    (and route[0], which mirrors it) is written exactly once here and no
+    //    other route in this file ever modifies it afterward.
+    const lockedStartLocation = { latitude: lat, longitude: lng };
 
     const session = new Session({
       userId,
@@ -209,8 +226,10 @@ router.post('/start', async (req, res) => {
     });
 
     const savedSession = await session.save();
-    console.log(`✅ Session created - sessionId: ${savedSession._id}`);
-    console.log(`✅ Start location locked: ${lat}, ${lng}`);
+    console.log(`✅ Session created - sessionId: ${savedSession._id}, startLocation LOCKED at (${lat}, ${lng})`);
+
+    // ✅ Return the locked location explicitly so the app can pin it down
+    //    without waiting on any further GPS reads.
     res.status(201).json(savedSession);
   } catch (err) {
     console.log('❌ ERROR in /start:', err.message);
@@ -222,6 +241,7 @@ router.post('/start', async (req, res) => {
   }
 });
 
+// ─── END SESSION ─────────────────────────────────────────────────────────────
 router.post('/end', async (req, res) => {
   try {
     const { sessionId } = req.body;
@@ -230,6 +250,7 @@ router.post('/end', async (req, res) => {
       return res.status(400).json({ message: 'Session ID required' });
     }
 
+    // ✅ FIX: calculate totalDistanceKm from Location records before ending
     let totalDistanceKm = 0;
     try {
       const locations = await Location.find({ sessionId })
@@ -249,6 +270,7 @@ router.post('/end', async (req, res) => {
 
       console.log(`📏 Total distance for session ${sessionId}: ${totalDistanceKm.toFixed(3)} km`);
     } catch (distErr) {
+      // ✅ Don't block session end if distance calc fails — just log it
       console.log('⚠️ Could not calculate distance:', distErr.message);
     }
 
@@ -274,10 +296,12 @@ router.post('/end', async (req, res) => {
   }
 });
 
+// ─── MANUAL CLEANUP TRIGGER (for admin / ops use) ────────────────────────────
 router.post('/cleanup', async (req, res) => {
   try {
     await cleanupStaleSessions();
 
+    // ✅ Also remove sessions left in an incomplete state with no route data at all
     const cutoff = new Date(Date.now() - STALE_SESSION_HOURS * 60 * 60 * 1000);
     const incompleteResult = await Session.updateMany(
       {
@@ -299,10 +323,12 @@ router.post('/cleanup', async (req, res) => {
   }
 });
 
+// ─── GET SESSION BY ID ───────────────────────────────────────────────────────
 router.get('/:sessionId', async (req, res) => {
   try {
     const { sessionId } = req.params;
 
+    // ✅ Optional route pagination via ?routePage & ?routeLimit for large sessions
     const routePage = parseInt(req.query.routePage, 10) || null;
     const routeLimit = Math.min(parseInt(req.query.routeLimit, 10) || 1000, 5000);
 
