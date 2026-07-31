@@ -1,4 +1,3 @@
-
 // controllers/purchaseController.js
 const mongoose = require("mongoose");
 
@@ -206,7 +205,7 @@ async function runPurchaseSave(body, createdBy, session) {
       name: productDoc.name,
       quantity: qty,
       purchasePrice: price,
-      mrp: Number(p.mrp) || productDoc.mrp || 0,
+      mrp: numOrUndefined(p.mrp) !== undefined ? Number(p.mrp) : (productDoc.mrp || 0),
       gst: Number(p.gst) || 0,
       rackNo: p.rackNo || "",
       batchNo,
@@ -237,6 +236,11 @@ async function runPurchaseSave(body, createdBy, session) {
       distributorPrice: numOrUndefined(p.distributorPrice),
       retailerPrice: numOrUndefined(p.retailerPrice),
       walkinPrice: numOrUndefined(p.walkinPrice),
+      // FIX: mrp was captured on the purchase-entry line item (and shown in the
+      // Purchase Price History table) but was never applied back onto the
+      // Product document — so the "MRP" price-type button on Place Order kept
+      // showing a stale value no matter what was entered on the latest purchase.
+      mrp: numOrUndefined(p.mrp),
     });
 
     movementDocs.push({
@@ -292,6 +296,7 @@ async function runPurchaseSave(body, createdBy, session) {
     if (u.distributorPrice !== undefined) setFields.distributorPrice = u.distributorPrice;
     if (u.retailerPrice !== undefined) setFields.retailerPrice = u.retailerPrice;
     if (u.walkinPrice !== undefined) setFields.walkinPrice = u.walkinPrice;
+    if (u.mrp !== undefined) setFields.mrp = u.mrp;
 
     await Product.findByIdAndUpdate(
       u.productId,
@@ -676,8 +681,8 @@ exports.updatePurchaseEntry = async (req, res) => {
   }
 };
 
-//+++++++++++++++++++++++++++++++++++++++++++++++++
 
+//+++++++++++++++++++++++++++++++++++++++++++++++++++
 // // controllers/purchaseController.js
 // const mongoose = require("mongoose");
 
@@ -708,18 +713,31 @@ exports.updatePurchaseEntry = async (req, res) => {
 //   return `${fyStart}-${fyStart + 1}`;
 // }
 
-// // e.g. PUR00045 — reads the last created purchase and increments its suffix
+// // e.g. PUR00045 — scans ALL purchase numbers and increments the highest suffix.
+// //
+// // NOTE: this used to just take the single most-recently-created document
+// // (sort by createdAt) and increment its suffix. That breaks as soon as two
+// // documents share a createdAt — which happens whenever data is bulk-imported
+// // (e.g. a JSON restore), since every imported row typically gets the same
+// // timestamp. Mongo's sort is not guaranteed to break createdAt ties in
+// // purchaseNumber order, so the "last" document picked could be an old one
+// // with a low suffix, causing generatePurchaseNumber to hand out a number
+// // that already exists → E11000 duplicate key on purchaseNumber_1. Scanning
+// // for the true max avoids that regardless of createdAt values.
 // async function generatePurchaseNumber(session) {
-//   const last = await PurchaseEntry.findOne({})
-//     .sort({ createdAt: -1 })
-//     .session(session || null);
+//   const docs = await PurchaseEntry.find({}, { purchaseNumber: 1 })
+//     .session(session || null)
+//     .lean();
 
-//   let nextSeq = 1;
-//   if (last?.purchaseNumber) {
-//     const match = last.purchaseNumber.match(/(\d+)$/);
-//     if (match) nextSeq = parseInt(match[1], 10) + 1;
+//   let maxSeq = 0;
+//   for (const d of docs) {
+//     const match = d.purchaseNumber?.match(/(\d+)$/);
+//     if (match) {
+//       const n = parseInt(match[1], 10);
+//       if (n > maxSeq) maxSeq = n;
+//     }
 //   }
-//   return `PUR${String(nextSeq).padStart(5, "0")}`;
+//   return `PUR${String(maxSeq + 1).padStart(5, "0")}`;
 // }
 
 // // e.g. RC2026-2027/PUC/001 — "RC" + Indian financial year (Apr–Mar) of the
@@ -732,15 +750,24 @@ exports.updatePurchaseEntry = async (req, res) => {
 //   const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 //   const regex = new RegExp(`^${escapedPrefix}(\\d+)$`);
 
-//   const last = await PurchaseEntry.findOne({ invoiceNumber: regex })
-//     .sort({ createdAt: -1 })
-//     .session(session || null);
+//   // Same reasoning as generatePurchaseNumber above: scan for the true max
+//   // sequence within this financial year's prefix rather than trusting a
+//   // createdAt-sorted "last" document, which is unreliable when rows share
+//   // a createdAt (e.g. after a bulk import).
+//   const docs = await PurchaseEntry.find({ invoiceNumber: regex }, { invoiceNumber: 1 })
+//     .session(session || null)
+//     .lean();
 
 //   let nextSeq = 1;
-//   if (last?.invoiceNumber) {
-//     const match = last.invoiceNumber.match(/(\d+)$/);
-//     if (match) nextSeq = parseInt(match[1], 10) + 1;
+//   let maxSeq = 0;
+//   for (const d of docs) {
+//     const match = d.invoiceNumber?.match(/(\d+)$/);
+//     if (match) {
+//       const n = parseInt(match[1], 10);
+//       if (n > maxSeq) maxSeq = n;
+//     }
 //   }
+//   if (maxSeq > 0) nextSeq = maxSeq + 1;
 //   return `${prefix}${String(nextSeq).padStart(3, "0")}`;
 // }
 
@@ -768,15 +795,23 @@ exports.updatePurchaseEntry = async (req, res) => {
 //   const prefix = `B${dateStamp}-`;
 //   const regex = new RegExp(`^${prefix}(\\d+)$`);
 
-//   const last = await StockBatch.findOne({ batchNo: regex })
-//     .sort({ createdAt: -1 })
-//     .session(session || null);
+//   // Same reasoning as generatePurchaseNumber: scan for the true max instead
+//   // of trusting a createdAt-sorted "last" document (unreliable on ties,
+//   // e.g. after a bulk import).
+//   const docs = await StockBatch.find({ batchNo: regex }, { batchNo: 1 })
+//     .session(session || null)
+//     .lean();
 
 //   let nextSeq = 1;
-//   if (last?.batchNo) {
-//     const match = last.batchNo.match(/-(\d+)$/);
-//     if (match) nextSeq = parseInt(match[1], 10) + 1;
+//   let maxSeq = 0;
+//   for (const d of docs) {
+//     const match = d.batchNo?.match(/-(\d+)$/);
+//     if (match) {
+//       const n = parseInt(match[1], 10);
+//       if (n > maxSeq) maxSeq = n;
+//     }
 //   }
+//   if (maxSeq > 0) nextSeq = maxSeq + 1;
 //   return nextSeq;
 // }
 
@@ -1324,3 +1359,4 @@ exports.updatePurchaseEntry = async (req, res) => {
 //     res.status(400).json({ msg: err.message });
 //   }
 // };
+
