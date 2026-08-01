@@ -1,17 +1,24 @@
-// sessionRoutes.js - COMPLETE FIXED VERSION
+// sessionRoutes.js - COMPLETE WORKING VERSION
 
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
+
+// ✅ Import models with correct paths
 const Session = require('../models/FSEModel/Session');
 const Location = require('../models/LocationModel/Location');
-const FSEDay = require('../models/FSEModel/FSEEDay');
 const calculateDistance = require('../utils/distance');
 
-// ✅ NOTE: Add your auth middleware here, e.g.:
-// const authMiddleware = require('../middleware/auth');
-// router.use(authMiddleware);
+// ✅ Try to import FSEDay, but don't fail if it doesn't exist
+let FSEDay = null;
+try {
+  FSEDay = require('../models/FSEModel/FSEEDay');
+  console.log('✅ FSEDay model loaded');
+} catch (err) {
+  console.log('⚠️ FSEDay model not found, will skip FSEDay operations');
+}
 
-const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // run cleanup every hour
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
 // ─── DAY BOUNDARY HELPERS ─────────────────────────────────────────────────
 function getStartOfToday() {
@@ -25,12 +32,6 @@ function isFromPreviousDay(date) {
 }
 
 // ─── AUTO-END A SINGLE STALE SESSION ─────────────────────────────────────
-// A session is "stale" once its startTime falls before today's midnight —
-// i.e. it belongs to a previous calendar day. This is what actually decides
-// whether tracking gets resumed or not, so it MUST be based on the day
-// boundary, not a rolling time window (a rolling window let sessions
-// started late in the evening stay "ACTIVE" well into the next afternoon,
-// which is why old routes/locations kept showing up instead of new ones).
 async function autoEndSessionIfStale(session) {
   if (!session || session.status !== 'ACTIVE') return session;
   if (!isFromPreviousDay(session.startTime)) return session;
@@ -137,8 +138,6 @@ router.get('/today/:userId', async (req, res) => {
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
 
-    // ✅ FIX: Only look for ACTIVE sessions, not AUTO_ENDED
-    // AUTO_ENDED means the day is over and should not be resumed
     const session = await Session.findOne({
       userId,
       status: 'ACTIVE',
@@ -156,7 +155,7 @@ router.get('/today/:userId', async (req, res) => {
   }
 });
 
-// ─── ORPHANED SESSION CHECK (for app-start recovery) ─────────────────────────
+// ─── ORPHANED SESSION CHECK ──────────────────────────────────────────────
 router.get('/orphaned/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -165,8 +164,6 @@ router.get('/orphaned/:userId', async (req, res) => {
       return res.status(400).json({ message: 'userId is required' });
     }
 
-    // ✅ Same day-boundary rule as everywhere else: a session from a previous
-    //    day is orphaned, regardless of how many hours it's been running.
     const orphaned = await Session.findOne({
       userId,
       status: 'ACTIVE',
@@ -187,32 +184,72 @@ router.get('/orphaned/:userId', async (req, res) => {
 // ─── START SESSION ───────────────────────────────────────────────────────────
 router.post('/start', async (req, res) => {
   try {
+    console.log('📥 POST /api/session/start - Request received');
+    console.log('📥 Body:', JSON.stringify(req.body, null, 2));
+
     const { userId, latitude, longitude } = req.body;
 
-    if (!userId || userId.toString().trim() === '') {
-      return res.status(400).json({ message: 'userId is required' });
-    }
-    if (latitude === undefined || latitude === null || latitude === '') {
-      return res.status(400).json({ message: 'latitude is required' });
-    }
-    if (longitude === undefined || longitude === null || longitude === '') {
-      return res.status(400).json({ message: 'longitude is required' });
+    // ✅ VALIDATION - Check all required fields
+    if (!userId) {
+      console.log('❌ userId is missing');
+      return res.status(400).json({ 
+        success: false,
+        message: 'userId is required' 
+      });
     }
 
+    if (latitude === undefined || latitude === null) {
+      console.log('❌ latitude is missing');
+      return res.status(400).json({ 
+        success: false,
+        message: 'latitude is required' 
+      });
+    }
+
+    if (longitude === undefined || longitude === null) {
+      console.log('❌ longitude is missing');
+      return res.status(400).json({ 
+        success: false,
+        message: 'longitude is required' 
+      });
+    }
+
+    // ✅ Parse coordinates
     const lat = parseFloat(latitude);
     const lng = parseFloat(longitude);
 
     if (isNaN(lat) || isNaN(lng)) {
+      console.log('❌ Invalid coordinates:', { latitude, longitude });
       return res.status(400).json({
+        success: false,
         message: 'latitude and longitude must be valid numbers',
       });
     }
 
+    // ✅ Validate coordinate ranges
+    if (lat < -90 || lat > 90) {
+      return res.status(400).json({
+        success: false,
+        message: 'latitude must be between -90 and 90',
+      });
+    }
+
+    if (lng < -180 || lng > 180) {
+      return res.status(400).json({
+        success: false,
+        message: 'longitude must be between -180 and 180',
+      });
+    }
+
+    console.log(`✅ Validated coordinates: lat=${lat}, lng=${lng}`);
+
+    // ✅ Check for existing ACTIVE session today
     const startOfDay = getStartOfToday();
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
 
-    // ✅ Check for existing ACTIVE session today
+    console.log(`🔍 Checking for existing session for user: ${userId}`);
+
     const existingSession = await Session.findOne({
       userId,
       status: 'ACTIVE',
@@ -220,58 +257,123 @@ router.post('/start', async (req, res) => {
     });
 
     if (existingSession) {
-      console.log(`⚠️ Session already exists for today - sessionId: ${existingSession._id}`);
-      return res.json(existingSession);
+      console.log(`⚠️ Session already exists - sessionId: ${existingSession._id}`);
+      return res.status(200).json(existingSession);
     }
 
-    const lockedStartLocation = { latitude: lat, longitude: lng };
+    console.log('✅ No existing session found. Creating new session...');
 
-    const session = new Session({
-      userId,
-      startLocation: lockedStartLocation,
-      route: [{ latitude: lat, longitude: lng, timestamp: new Date() }],
+    // ✅ Create new session
+    const sessionData = {
+      userId: userId,
+      startLocation: { 
+        latitude: lat, 
+        longitude: lng 
+      },
+      route: [{ 
+        latitude: lat, 
+        longitude: lng, 
+        timestamp: new Date() 
+      }],
       status: 'ACTIVE',
       totalDistanceKm: 0,
-    });
+      startTime: new Date(),
+    };
 
+    console.log('📝 Creating session with data:', JSON.stringify(sessionData, null, 2));
+
+    const session = new Session(sessionData);
     const savedSession = await session.save();
-    console.log(`✅ Session created - sessionId: ${savedSession._id}, startLocation LOCKED at (${lat}, ${lng})`);
+    
+    console.log(`✅ Session created - sessionId: ${savedSession._id}`);
 
-    // ✅ Create FSEDay record
-    const todayStr = new Date().toISOString().split('T')[0];
-    let fseDay = await FSEDay.findOne({
-      fseId: userId,
-      date: todayStr
-    });
-
-    if (!fseDay) {
-      fseDay = new FSEDay({
-        fseId: userId,
-        date: todayStr,
-        startTime: savedSession.startTime,
-        status: 'STARTED'
-      });
-      await fseDay.save();
+    // ✅ Save initial location to Location collection (optional but recommended)
+    try {
+      const locationData = {
+        userId: userId,
+        sessionId: savedSession._id,
+        latitude: lat,
+        longitude: lng,
+        timestamp: new Date(),
+      };
+      
+      const location = new Location(locationData);
+      await location.save();
+      console.log(`✅ Initial location saved`);
+    } catch (locErr) {
+      console.log('⚠️ Initial location save failed (non-critical):', locErr.message);
     }
 
-    // ✅ Save initial location to Location collection
-    const location = new Location({
-      userId: userId,
-      sessionId: savedSession._id,
-      latitude: lat,
-      longitude: lng,
-      timestamp: new Date(),
-      accuracy: req.body.accuracy || null
-    });
-    await location.save();
+    // ✅ Create FSEDay record (optional)
+    if (FSEDay) {
+      try {
+        const todayStr = new Date().toISOString().split('T')[0];
+        let fseDay = await FSEDay.findOne({
+          fseId: userId,
+          date: todayStr
+        });
 
-    res.status(201).json(savedSession);
+        if (!fseDay) {
+          fseDay = new FSEDay({
+            fseId: userId,
+            date: todayStr,
+            startTime: savedSession.startTime,
+            status: 'STARTED'
+          });
+          await fseDay.save();
+          console.log(`✅ FSEDay created for ${todayStr}`);
+        }
+      } catch (fseErr) {
+        console.log('⚠️ FSEDay creation failed (non-critical):', fseErr.message);
+      }
+    }
+
+    console.log(`✅ Session started successfully for user ${userId}`);
+
+    // ✅ Return the session with all needed fields
+    res.status(201).json({
+      success: true,
+      _id: savedSession._id,
+      userId: savedSession.userId,
+      startLocation: savedSession.startLocation,
+      startTime: savedSession.startTime,
+      status: savedSession.status,
+      totalDistanceKm: savedSession.totalDistanceKm,
+      route: savedSession.route,
+      message: 'Session started successfully'
+    });
+
   } catch (err) {
-    console.log('❌ ERROR in /start:', err.message);
+    console.error('❌ ERROR in /start:', err);
+    console.error('❌ Error stack:', err.stack);
+    
+    // ✅ Check for duplicate key error
+    if (err.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'A session already exists for today',
+        error: 'Duplicate session'
+      });
+    }
+
+    // ✅ Check for validation error
+    if (err.name === 'ValidationError') {
+      const errors = {};
+      for (const field in err.errors) {
+        errors[field] = err.errors[field].message;
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: errors
+      });
+    }
+
     res.status(500).json({
+      success: false,
       message: 'Error starting session',
       error: err.message,
-      details: err.name === 'ValidationError' ? err.errors : null,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 });
@@ -303,7 +405,7 @@ router.post('/end', async (req, res) => {
     console.log(`📊 Route points: ${session.route.length}`);
     console.log(`📊 Current distance: ${session.totalDistanceKm} km`);
 
-    // ✅ Calculate final distance from Location collection (more accurate)
+    // ✅ Calculate final distance from Location collection
     let totalDistanceKm = session.totalDistanceKm || 0;
     try {
       const locations = await Location.find({ sessionId })
@@ -333,7 +435,6 @@ router.post('/end', async (req, res) => {
       const lng = parseFloat(finalLocation.longitude);
       
       if (!isNaN(lat) && !isNaN(lng)) {
-        // Calculate distance to final point
         const lastPoint = session.route.length > 0 
           ? session.route[session.route.length - 1] 
           : null;
@@ -375,27 +476,33 @@ router.post('/end', async (req, res) => {
     await session.save();
 
     // ✅ Update FSEDay record
-    const todayStr = new Date().toISOString().split('T')[0];
-    let fseDay = await FSEDay.findOne({
-      fseId: session.userId,
-      date: todayStr
-    });
+    if (FSEDay) {
+      try {
+        const todayStr = new Date().toISOString().split('T')[0];
+        let fseDay = await FSEDay.findOne({
+          fseId: session.userId,
+          date: todayStr
+        });
 
-    if (!fseDay) {
-      fseDay = new FSEDay({
-        fseId: session.userId,
-        date: todayStr,
-        startTime: session.startTime,
-        endTime: session.endTime,
-        status: 'ENDED',
-        endType: 'MANUAL'
-      });
-    } else {
-      fseDay.endTime = session.endTime;
-      fseDay.status = 'ENDED';
-      fseDay.endType = 'MANUAL';
+        if (!fseDay) {
+          fseDay = new FSEDay({
+            fseId: session.userId,
+            date: todayStr,
+            startTime: session.startTime,
+            endTime: session.endTime,
+            status: 'ENDED',
+            endType: 'MANUAL'
+          });
+        } else {
+          fseDay.endTime = session.endTime;
+          fseDay.status = 'ENDED';
+          fseDay.endType = 'MANUAL';
+        }
+        await fseDay.save();
+      } catch (fseErr) {
+        console.log('⚠️ FSEDay update failed (non-critical):', fseErr.message);
+      }
     }
-    await fseDay.save();
 
     console.log(`✅ Session ended - sessionId: ${sessionId}`);
     console.log(`✅ Total distance: ${session.totalDistanceKm} km`);
@@ -418,11 +525,15 @@ router.post('/end', async (req, res) => {
 
   } catch (err) {
     console.log('❌ Error ending session:', err.message);
-    res.status(500).json({ message: 'Error ending session', error: err.message });
+    res.status(500).json({ 
+      success: false,
+      message: 'Error ending session', 
+      error: err.message 
+    });
   }
 });
 
-// ─── MANUAL CLEANUP TRIGGER (for admin / ops use) ────────────────────────────
+// ─── MANUAL CLEANUP TRIGGER ────────────────────────────────────────────────
 router.post('/cleanup', async (req, res) => {
   try {
     await cleanupStaleSessions();
@@ -447,7 +558,7 @@ router.post('/cleanup', async (req, res) => {
   }
 });
 
-// ─── AUTO-END ALL ACTIVE SESSIONS (for cron job) ──────────────────────────
+// ─── AUTO-END ALL SESSIONS (for cron job) ─────────────────────────────────
 router.post('/auto-end-all', async (req, res) => {
   try {
     const activeSessions = await Session.find({
@@ -497,11 +608,6 @@ router.get('/:sessionId', async (req, res) => {
       return res.status(404).json({ message: 'Session not found' });
     }
 
-    // ✅ THE ACTUAL FIX: this is the endpoint the app calls on launch to decide
-    //    whether to resume tracking. Auto-end it right here, inline, if it's
-    //    still marked ACTIVE but started on a previous day — instead of
-    //    waiting for the hourly sweep to catch up. This stops the app from
-    //    resuming yesterday's route/location and appending new points to it.
     session = await autoEndSessionIfStale(session);
 
     if (routePage) {
@@ -526,7 +632,6 @@ router.get('/:sessionId', async (req, res) => {
 });
 
 module.exports = router;
-
 //--------- 01.08.2026 ------------------
 // const express = require('express');
 // const router = express.Router();
