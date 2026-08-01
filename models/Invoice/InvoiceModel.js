@@ -1,3 +1,5 @@
+// models/Invoice/InvoiceModel.js
+
 const mongoose = require("mongoose");
 
 const ShippingAddressSchema = new mongoose.Schema({
@@ -20,23 +22,12 @@ const InvoiceSchema = new mongoose.Schema(
         name: String,
         qty: Number,
         price: Number,
-        // NEW — FIFO batch trail. Optional so existing invoices created
-        // before this feature (which have no batch data) still validate.
-        // Each entry records exactly which batch a portion of this line's
-        // qty was drawn from, so returns can restore stock to the right
-        // place instead of the newest batch.
         batchAllocations: [
           {
             batchId: { type: mongoose.Schema.Types.ObjectId, ref: "StockBatch" },
             batchNo: String,
             qty: Number,
             purchaseCost: Number,
-            // The Retailer/Distributor/Walk-in/MRP price actually charged for
-            // this chunk — may differ per batch (see StockBatch's per-batch
-            // price fields), and can differ from the line's headline price
-            // when FIFO/manual selection splits qty across two batches
-            // purchased at different prices.
-            sellingPrice: Number,
           },
         ],
       },
@@ -61,7 +52,7 @@ const InvoiceSchema = new mongoose.Schema(
     shippingAddress: { type: ShippingAddressSchema, default: {} },
 
     subtotal: { type: Number, required: true },
-    discount: { type: Number, default: 0 }, // ✅ DISCOUNT
+    discount: { type: Number, default: 0 },
     courierCharge: { type: Number, default: 0 },
     salesperson: { type: String },
     referenceNo: { type: String },
@@ -70,6 +61,11 @@ const InvoiceSchema = new mongoose.Schema(
       type: String,
       enum: ["OEM", "TOOLS"],
       default: "",
+    },
+    priceType: {
+      type: String,
+      enum: ["retailerPrice", "distributorPrice", "walkinPrice", "mrp"],
+      default: "retailerPrice",
     },
   },
   { timestamps: true },

@@ -1,3 +1,5 @@
+// controllers/invoiceController.js
+
 const mongoose = require("mongoose");
 const Invoice = require("../models/Invoice/InvoiceModel");
 const StockMovement = require("../models/Purchase/StockMovement");
@@ -6,7 +8,6 @@ const {
   getBatchQueue,
   computeAllocation,
   consumeAllocations,
-  consumeExplicitAllocations,
   InsufficientStockError,
 } = require("../services/fifoAllocationService");
 
@@ -17,10 +18,6 @@ const getFinancialYear = () => {
   return month >= 4 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
 };
 
-
-// Core save routine — shared by the transactional path and the
-// non-transactional fallback (standalone MongoDB without a replica set).
-// Mirrors the pattern already used in purchaseController.runPurchaseSave.
 async function runInvoiceSave(body, session) {
   const {
     items,
@@ -44,19 +41,16 @@ async function runInvoiceSave(body, session) {
     referenceNo,
     invoiceDate,
     orderType,
+    priceType,
   } = body;
 
   if (!customerPhone || !customerName || !items || !items.length || !totalAmount || !paymentMode) {
     throw new Error("Missing required invoice fields");
   }
 
-  // ─── FIFO allocation: figure out which batches each line item consumes,
-  // then actually decrement those batches, before the invoice is written.
-  // Any shortfall throws InsufficientStockError, which aborts the whole
-  // transaction — nothing is partially saved.
   const itemsWithAllocations = [];
   const movementDocs = [];
-  const productQtyTotals = new Map(); // productId (string) -> total qty sold, for the Product.moq update below
+  const productQtyTotals = new Map();
 
   for (const item of items) {
     if (!item.productId) throw new Error("Each invoice item must reference a product");
@@ -67,30 +61,8 @@ async function runInvoiceSave(body, session) {
       ? new mongoose.Types.ObjectId(item.productId)
       : item.productId;
 
-    // Honor the EXACT batch(es) the cashier chose in Place Order (e.g. they
-    // explicitly picked Batch B over the FIFO default), as long as the
-    // client sent a complete allocation for this line's qty. Otherwise fall
-    // back to automatic FIFO — same as before this feature existed, and
-    // still what runs whenever showBatchSelector is off.
-    const clientAllocations = Array.isArray(item.batchAllocations)
-      ? item.batchAllocations.filter((a) => a && a.batchNumber && Number(a.qty) > 0)
-      : [];
-    const clientTotalQty = clientAllocations.reduce((s, a) => s + Number(a.qty), 0);
-
-    let allocations;
-    if (clientAllocations.length > 0 && clientTotalQty === qty) {
-      allocations = await consumeExplicitAllocations(productObjectId, clientAllocations, session);
-    } else {
-      allocations = await computeAllocation(productObjectId, qty, { session });
-      await consumeAllocations(allocations, session);
-    }
-
-    // Carry over the resolved selling price per batch chunk (sent from
-    // Place Order) so the invoice keeps a record of what was actually
-    // charged against each specific batch, not just the line's headline price.
-    const priceByBatchNo = new Map(
-      clientAllocations.map((a) => [a.batchNumber, a.price])
-    );
+    const allocations = await computeAllocation(productObjectId, qty, { session });
+    await consumeAllocations(allocations, session);
 
     itemsWithAllocations.push({
       ...item,
@@ -99,7 +71,6 @@ async function runInvoiceSave(body, session) {
         batchNo: a.batchNo,
         qty: a.qty,
         purchaseCost: a.purchaseCost,
-        sellingPrice: priceByBatchNo.has(a.batchNo) ? priceByBatchNo.get(a.batchNo) : item.price,
       })),
     });
 
@@ -108,7 +79,7 @@ async function runInvoiceSave(body, session) {
         productId: productObjectId,
         batchNo: a.batchNo,
         type: "sale",
-        quantity: -a.qty, // negative = stock out
+        quantity: -a.qty,
         referenceType: "Invoice",
       });
     }
@@ -117,10 +88,6 @@ async function runInvoiceSave(body, session) {
     productQtyTotals.set(key, (productQtyTotals.get(key) || 0) + qty);
   }
 
-  // Keep Product.moq (the denormalized "current total stock" field used across
-  // the UI — Products list, Order Cart, etc.) in sync with the batch-level
-  // truth, atomically alongside the batch decrements above. This mirrors how
-  // purchaseController.runPurchaseSave increments moq on the inbound side.
   for (const [productId, totalQty] of productQtyTotals.entries()) {
     await Product.findByIdAndUpdate(
       productId,
@@ -162,6 +129,7 @@ async function runInvoiceSave(body, session) {
         referenceNo: referenceNo || "",
         invoiceDate: invoiceDate || new Date(),
         orderType: orderType || "",
+        priceType: priceType || "retailerPrice",
       },
     ],
     { session }
@@ -174,10 +142,6 @@ async function runInvoiceSave(body, session) {
   return invoice;
 }
 
-// ─── Create Invoice (transactional, with fallback) ──────────────────────────
-// Response shape is unchanged from before — existing frontend callers keep
-// working exactly as they did. The only new behavior is that stock is now
-// actually consumed batch-by-batch (FIFO) instead of not being touched at all.
 const createInvoice = async (req, res) => {
   const session = await mongoose.startSession();
 
@@ -227,8 +191,6 @@ const createInvoice = async (req, res) => {
   }
 };
 
-// ─── FIFO Batch Queue (read-only, for the Billing UI cards) ─────────────────
-// GET /api/invoices/batch-queue/:productId
 const getProductBatchQueue = async (req, res) => {
   try {
     const { productId } = req.params;
@@ -243,10 +205,6 @@ const getProductBatchQueue = async (req, res) => {
   }
 };
 
-// ─── Preview Allocation (read-only, no writes) ──────────────────────────────
-// POST /api/invoices/preview-allocation  { productId, qty }
-// Powers the "Batch Allocation Panel" — shown live as the cashier types a
-// quantity, before the invoice is actually created.
 const previewAllocation = async (req, res) => {
   try {
     const { productId, qty } = req.body;
@@ -268,7 +226,6 @@ const previewAllocation = async (req, res) => {
   }
 };
 
-// ✅ GET INVOICES (WITH STATUS FILTER) - FIXED
 const getInvoices = async (req, res) => {
   try {
     const { filter, billerName, status } = req.query;
@@ -283,7 +240,6 @@ const getInvoices = async (req, res) => {
       return { start, end };
     };
 
-    // ✅ Apply date filter
     if (filter === "today") {
       const { start, end } = getDayRange(now);
       query.createdAt = { $gte: start, $lte: end };
@@ -298,16 +254,13 @@ const getInvoices = async (req, res) => {
       start.setHours(0, 0, 0, 0);
       query.createdAt = { $gte: start, $lte: now };
     }
-    // If filter === "all", no date filter
 
-    // ✅ Apply biller name filter
     if (billerName && billerName.trim() !== "") {
       query.billerName = billerName;
     }
 
-    // ✅ CRITICAL FIX: Apply status filter
     if (status && status.trim() !== "") {
-      query.status = status; // ← Now properly filters
+      query.status = status;
     }
 
     const invoices = await Invoice.find(query).sort({ createdAt: -1 });
@@ -319,13 +272,11 @@ const getInvoices = async (req, res) => {
   }
 };
 
-// ✅ UPDATE STATUS
 const updateInvoiceStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
-    // ✅ Validate status
     if (!['draft', 'completed'].includes(status)) {
       return res.status(400).json({ 
         message: 'Invalid status. Must be "draft" or "completed"' 
@@ -352,7 +303,6 @@ const updateInvoiceStatus = async (req, res) => {
   }
 };
 
-
 const deleteInvoice = async (req, res) => {
   try {
     const { invoiceNumber } = req.params;
@@ -373,9 +323,9 @@ module.exports = {
   createInvoice, 
   getInvoices, 
   updateInvoiceStatus,
-  deleteInvoice, // ← Don't forget to add to routes!
-  getProductBatchQueue, // NEW — FIFO batch queue for the Billing UI
-  previewAllocation,    // NEW — live allocation preview before invoice creation
+  deleteInvoice,
+  getProductBatchQueue,
+  previewAllocation,
 };
 
 //--------- 01.08.26 ----------------------
