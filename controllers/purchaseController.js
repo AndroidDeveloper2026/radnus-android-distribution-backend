@@ -30,6 +30,16 @@ function getFinancialYear(date) {
 }
 
 // e.g. PUR00045 — scans ALL purchase numbers and increments the highest suffix.
+//
+// NOTE: this used to just take the single most-recently-created document
+// (sort by createdAt) and increment its suffix. That breaks as soon as two
+// documents share a createdAt — which happens whenever data is bulk-imported
+// (e.g. a JSON restore), since every imported row typically gets the same
+// timestamp. Mongo's sort is not guaranteed to break createdAt ties in
+// purchaseNumber order, so the "last" document picked could be an old one
+// with a low suffix, causing generatePurchaseNumber to hand out a number
+// that already exists → E11000 duplicate key on purchaseNumber_1. Scanning
+// for the true max avoids that regardless of createdAt values.
 async function generatePurchaseNumber(session) {
   const docs = await PurchaseEntry.find({}, { purchaseNumber: 1 })
     .session(session || null)
@@ -46,13 +56,20 @@ async function generatePurchaseNumber(session) {
   return `PUR${String(maxSeq + 1).padStart(5, "0")}`;
 }
 
-// e.g. RC2026-2027/PUC/001
+// e.g. RC2026-2027/PUC/001 — "RC" + Indian financial year (Apr–Mar) of the
+// invoice date + "/PUC/" (Purchase module code) + a 3-digit sequence that
+// resets every financial year. This is the auto-generated Invoice Number
+// (replaces manual entry — see runPurchaseSave).
 async function generateInvoiceNumber(session, date) {
   const fy = getFinancialYear(date);
   const prefix = `RC${fy}/PUC/`;
   const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
   const regex = new RegExp(`^${escapedPrefix}(\\d+)$`);
 
+  // Same reasoning as generatePurchaseNumber above: scan for the true max
+  // sequence within this financial year's prefix rather than trusting a
+  // createdAt-sorted "last" document, which is unreliable when rows share
+  // a createdAt (e.g. after a bulk import).
   const docs = await PurchaseEntry.find({ invoiceNumber: regex }, { invoiceNumber: 1 })
     .session(session || null)
     .lean();
@@ -70,7 +87,8 @@ async function generateInvoiceNumber(session, date) {
   return `${prefix}${String(nextSeq).padStart(3, "0")}`;
 }
 
-// e.g. B20260713-001
+// e.g. B20260713-001 — date-stamped (YYYYMMDD of the invoice date), with a
+// running 3-digit sequence that resets each day across ALL products.
 function formatDateStamp(date) {
   const d = date ? new Date(date) : new Date();
   const y = d.getFullYear();
@@ -83,10 +101,19 @@ function formatBatchNo(dateStamp, seq) {
   return `B${dateStamp}-${String(seq).padStart(3, "0")}`;
 }
 
+// Reads the highest existing sequence already used for this date stamp.
+// NOTE: this only looks at the DB, so when a single purchase has several
+// line items, the caller must increment the sequence locally for each
+// subsequent item rather than calling this again (sibling batches for the
+// same purchase aren't inserted yet, so re-querying would hand out
+// duplicates). See runPurchaseSave's use of `batchSeq++`.
 async function getNextBatchSeq(dateStamp, session) {
   const prefix = `B${dateStamp}-`;
   const regex = new RegExp(`^${prefix}(\\d+)$`);
 
+  // Same reasoning as generatePurchaseNumber: scan for the true max instead
+  // of trusting a createdAt-sorted "last" document (unreliable on ties,
+  // e.g. after a bulk import).
   const docs = await StockBatch.find({ batchNo: regex }, { batchNo: 1 })
     .session(session || null)
     .lean();
@@ -104,7 +131,7 @@ async function getNextBatchSeq(dateStamp, session) {
   return nextSeq;
 }
 
-// Weighted-average cost
+// Weighted-average cost: blends existing stock value with the new purchase
 function computeAverageCost(product, qty, purchasePrice) {
   const existingQty = Number(product.moq) || 0;
   const existingAvg =
@@ -117,8 +144,8 @@ function computeAverageCost(product, qty, purchasePrice) {
   return round2((existingQty * existingAvg + qty * purchasePrice) / newQty);
 }
 
-// ─── Core Save Routine ──────────────────────────────────────────────────────
-
+// Core save routine — shared by the transactional path and the
+// non-transactional fallback (standalone MongoDB without a replica set).
 async function runPurchaseSave(body, createdBy, session) {
   const {
     supplier,
@@ -146,6 +173,9 @@ async function runPurchaseSave(body, createdBy, session) {
   const movementDocs = [];
   const productUpdates = [];
 
+  // Batch numbers are date-stamped (e.g. B20260713-001) with a sequence that
+  // resets daily and runs across every product. Fetched once here, then
+  // incremented locally per line item below — see getNextBatchSeq's note.
   const dateStamp = formatDateStamp(invoiceDate);
   let batchSeq = await getNextBatchSeq(dateStamp, session);
 
@@ -170,7 +200,6 @@ async function runPurchaseSave(body, createdBy, session) {
     const batchNo = formatBatchNo(dateStamp, batchSeq);
     batchSeq += 1;
 
-    // ─── 1. Save to PurchaseEntry.products ────────────────────────────────
     lineItems.push({
       productId: productDoc._id,
       sku: productDoc.sku,
@@ -188,27 +217,26 @@ async function runPurchaseSave(body, createdBy, session) {
       walkinPrice: numOrUndefined(p.walkinPrice),
     });
 
-    // ─── ✅ FIX 1: Save ALL price fields to StockBatch ────────────────────
     stockBatchDocs.push({
       productId: productDoc._id,
       batchNo,
       inwardDate: invoiceDate,
       purchasePrice: price,
-      
-      // ✅ CRITICAL FIX: Add all selling price fields
+      // Same per-batch price snapshot as the purchase-entry line item above —
+      // captured here too so Place Order / billing (which reads StockBatch,
+      // not PurchaseEntry) can resolve THIS batch's own price instead of
+      // always falling back to the product's current price.
       mrp: numOrUndefined(p.mrp) !== undefined ? Number(p.mrp) : (productDoc.mrp || undefined),
       itemCost: numOrUndefined(p.itemCost),
       distributorPrice: numOrUndefined(p.distributorPrice),
       retailerPrice: numOrUndefined(p.retailerPrice),
       walkinPrice: numOrUndefined(p.walkinPrice),
-      
       quantityPurchased: qty,
       quantityAvailable: qty,
       rackNo: p.rackNo || "",
       expiryDate: p.expiryDate || null,
     });
 
-    // ─── 3. Product updates ────────────────────────────────────────────────
     productUpdates.push({
       productId: productDoc._id,
       qty,
@@ -218,15 +246,18 @@ async function runPurchaseSave(body, createdBy, session) {
       distributorPrice: numOrUndefined(p.distributorPrice),
       retailerPrice: numOrUndefined(p.retailerPrice),
       walkinPrice: numOrUndefined(p.walkinPrice),
+      // FIX: mrp was captured on the purchase-entry line item (and shown in the
+      // Purchase Price History table) but was never applied back onto the
+      // Product document — so the "MRP" price-type button on Place Order kept
+      // showing a stale value no matter what was entered on the latest purchase.
       mrp: numOrUndefined(p.mrp),
     });
 
-    // ─── 4. Stock movement ────────────────────────────────────────────────
     movementDocs.push({
       productId: productDoc._id,
       batchNo,
       type: "purchase",
-      quantity: qty,
+      quantity: qty, // positive = stock in
       referenceType: "PurchaseEntry",
     });
   }
@@ -239,7 +270,6 @@ async function runPurchaseSave(body, createdBy, session) {
   const purchaseNumber = await generatePurchaseNumber(session);
   const invoiceNumber = await generateInvoiceNumber(session, invoiceDate);
 
-  // ─── Create Purchase Entry ──────────────────────────────────────────────
   const created = await PurchaseEntry.create(
     [
       {
@@ -264,15 +294,12 @@ async function runPurchaseSave(body, createdBy, session) {
   );
   const purchaseEntry = created[0];
 
-  // ─── Insert Stock Batches ──────────────────────────────────────────────
   const batchDocsWithRef = stockBatchDocs.map((b) => ({ ...b, purchaseEntryId: purchaseEntry._id }));
   await StockBatch.insertMany(batchDocsWithRef, { session });
 
-  // ─── Insert Stock Movements ────────────────────────────────────────────
   const movementDocsWithRef = movementDocs.map((m) => ({ ...m, referenceId: purchaseEntry._id }));
   await StockMovement.insertMany(movementDocsWithRef, { session });
 
-  // ─── Update Products ────────────────────────────────────────────────────
   for (const u of productUpdates) {
     const setFields = { lastPurchasePrice: u.price, averageCost: u.newAverageCost };
     if (u.itemCost !== undefined) setFields.itemCost = u.itemCost;
@@ -365,7 +392,7 @@ exports.getPurchaseEntries = async (req, res) => {
   }
 };
 
-// ─── Stock Aging ─────────────────────────────────────────────────────────────
+// ─── Stock Aging (must be declared before "/:id" route) ─────────────────────
 
 exports.getStockAging = async (req, res) => {
   try {
@@ -401,7 +428,7 @@ exports.getStockAging = async (req, res) => {
   }
 };
 
-// ─── Non-Moving Stock ──────────────────────────────────────────────────────
+// ─── Non-Moving Stock (must be declared before "/:id" route) ─────────────────
 
 exports.getNonMovingStock = async (req, res) => {
   try {
@@ -459,7 +486,7 @@ exports.getNonMovingStock = async (req, res) => {
   }
 };
 
-// ─── Price History (per product) ─────────────────────────────────────────
+// ─── Price History (per product, across all past purchases) ─────────────────
 
 exports.getPriceHistory = async (req, res) => {
   try {
@@ -514,15 +541,24 @@ exports.getProductPriceHistory = async (req, res) => {
 
     const productObjectId = new mongoose.Types.ObjectId(productId);
 
+    // 1. Get product information
     const product = await Product.findById(productObjectId);
     if (!product) {
       return res.status(404).json({ msg: "Product not found" });
     }
 
+    // 2. Get all purchases containing this product
     const purchases = await PurchaseEntry.aggregate([
+      // Match documents that contain the product
       { $match: { "products.productId": productObjectId } },
+      
+      // Unwind products array
       { $unwind: "$products" },
+      
+      // Match the specific product
       { $match: { "products.productId": productObjectId } },
+      
+      // Lookup supplier
       {
         $lookup: {
           from: "suppliers",
@@ -532,6 +568,8 @@ exports.getProductPriceHistory = async (req, res) => {
         }
       },
       { $unwind: { path: "$supplierInfo", preserveNullAndEmptyArrays: true } },
+      
+      // Project required fields
       {
         $project: {
           purchaseNumber: 1,
@@ -560,9 +598,12 @@ exports.getProductPriceHistory = async (req, res) => {
           paymentStatus: 1
         }
       },
+      
+      // Sort by purchase date (newest first)
       { $sort: { purchaseDate: -1, createdAt: -1 } }
     ]);
 
+    // 3. Calculate summary statistics
     const history = purchases.map(p => ({
       ...p,
       purchaseId: p._id
@@ -581,6 +622,7 @@ exports.getProductPriceHistory = async (req, res) => {
       lastPurchaseDate: history.length > 0 ? history[0].purchaseDate : null
     };
 
+    // 4. Prepare product info
     const productInfo = {
       _id: product._id,
       name: product.name,
@@ -624,7 +666,7 @@ exports.getPurchaseEntryById = async (req, res) => {
   }
 };
 
-// ─── Update Purchase Entry ────────────────────────────────────────────────────
+// ─── Update Purchase Entry (header-only) ────────────────────────────────────
 
 exports.updatePurchaseEntry = async (req, res) => {
   try {
