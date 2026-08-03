@@ -1,3 +1,4 @@
+
 // services/fifoAllocationService.js
 //
 // Core FIFO (First In, First Out) batch allocation logic for billing.
@@ -45,21 +46,18 @@ async function getBatchQueue(productId, session = null) {
     purchasePrice: b.purchasePrice,
     quantityPurchased: b.quantityPurchased,
     quantityAvailable: b.quantityAvailable,
-    // Per-batch selling prices as recorded when this specific batch was
-    // purchased (undefined when not captured — callers fall back to the
-    // product's current price for that mode).
-    mrp: b.mrp,
-    itemCost: b.itemCost,
-    distributorPrice: b.distributorPrice,
-    retailerPrice: b.retailerPrice,
-    walkinPrice: b.walkinPrice,
+    
+    // ✅ FIX: Include per-batch selling prices from StockBatch
+    // These are recorded at the time of purchase and stored in StockBatch
+    mrp: b.mrp ?? 0,
+    itemCost: b.itemCost ?? 0,
+    distributorPrice: b.distributorPrice ?? 0,
+    retailerPrice: b.retailerPrice ?? 0,
+    walkinPrice: b.walkinPrice ?? 0,
+    
     supplierName: b.purchaseEntryId?.supplier?.name || "—",
     invoiceNumber: b.purchaseEntryId?.invoiceNumber || "—",
     rackNo: b.rackNo || "",
-    // Position in the FIFO queue and a UI-friendly status.
-    // "active"   -> oldest batch with stock left (this is what billing will draw from first)
-    // "waiting"  -> has stock, but an older batch will be consumed first
-    // "finished" -> no stock left
     position: idx + 1,
     status:
       b.quantityAvailable <= 0
