@@ -1,7 +1,12 @@
-
 // services/fifoAllocationService.js
 //
 // Core FIFO (First In, First Out) batch allocation logic for billing.
+// Kept intentionally framework-agnostic (no req/res) so it can be:
+//   1. Reused by both the "preview allocation" endpoint (read-only) and the
+//      real invoice-creation endpoint (read + write, inside a transaction).
+//   2. Unit tested in isolation without spinning up Express.
+//
+// Reuses the existing StockBatch model — no schema changes needed.
 
 const mongoose = require("mongoose");
 const StockBatch = require("../models/Purchase/StockBatch");
@@ -18,8 +23,9 @@ class InsufficientStockError extends Error {
   }
 }
 
-// ─── Get Batch Queue (READ-ONLY) ──────────────────────────────────────────
-
+// Read-only: returns the FIFO-ordered batch queue for a product, whatever
+// the current quantityAvailable values are. Used to render "Current Batch",
+// "Next Batch", "Upcoming Batches" and the "Batch Queue" UI sections.
 async function getBatchQueue(productId, session = null) {
   const batches = await StockBatch.find({ productId })
     .sort({ inwardDate: 1, createdAt: 1 })
@@ -39,17 +45,21 @@ async function getBatchQueue(productId, session = null) {
     purchasePrice: b.purchasePrice,
     quantityPurchased: b.quantityPurchased,
     quantityAvailable: b.quantityAvailable,
-    
-    // ✅ FIX: Return ALL price fields from StockBatch
-    mrp: b.mrp ?? 0,
-    itemCost: b.itemCost ?? 0,
-    distributorPrice: b.distributorPrice ?? 0,
-    retailerPrice: b.retailerPrice ?? 0,
-    walkinPrice: b.walkinPrice ?? 0,
-    
+    // Per-batch selling prices as recorded when this specific batch was
+    // purchased (undefined when not captured — callers fall back to the
+    // product's current price for that mode).
+    mrp: b.mrp,
+    itemCost: b.itemCost,
+    distributorPrice: b.distributorPrice,
+    retailerPrice: b.retailerPrice,
+    walkinPrice: b.walkinPrice,
     supplierName: b.purchaseEntryId?.supplier?.name || "—",
     invoiceNumber: b.purchaseEntryId?.invoiceNumber || "—",
     rackNo: b.rackNo || "",
+    // Position in the FIFO queue and a UI-friendly status.
+    // "active"   -> oldest batch with stock left (this is what billing will draw from first)
+    // "waiting"  -> has stock, but an older batch will be consumed first
+    // "finished" -> no stock left
     position: idx + 1,
     status:
       b.quantityAvailable <= 0
@@ -60,8 +70,13 @@ async function getBatchQueue(productId, session = null) {
   }));
 }
 
-// ─── Compute Allocation (READ-ONLY) ──────────────────────────────────────
-
+// Given a required quantity, greedily allocate against batches ordered
+// oldest-first (by inwardDate). Does NOT write anything — pure computation
+// — so it's safe to call for a live "preview" as the cashier types a qty.
+//
+// batches: pass in pre-fetched batches (already sorted, already scoped to
+// quantityAvailable > 0) when calling inside a transaction, to avoid a
+// second query; otherwise pass null and this function fetches them itself.
 async function computeAllocation(productId, qty, { session = null, batches = null } = {}) {
   const requested = Number(qty);
   if (!requested || requested <= 0) {
@@ -100,8 +115,12 @@ async function computeAllocation(productId, qty, { session = null, batches = nul
   return allocations;
 }
 
-// ─── Consume Allocations (WRITE) ──────────────────────────────────────────
-
+// Writes: actually consumes the batches for a confirmed sale. Must be called
+// inside a Mongoose session/transaction by the caller (see billingController).
+// Uses a conditional $inc (quantityAvailable: {$gte: take}) as an optimistic
+// concurrency guard — if another cashier already consumed the batch between
+// our read and this write, the update matches 0 documents and we throw,
+// letting the transaction roll back cleanly rather than driving stock negative.
 async function consumeAllocations(allocations, session) {
   for (const alloc of allocations) {
     const result = await StockBatch.updateOne(
@@ -115,8 +134,9 @@ async function consumeAllocations(allocations, session) {
   }
 }
 
-// ─── Restore Allocations (WRITE) ──────────────────────────────────────────
-
+// Reverse of consumeAllocations — used by Sales Returns to restore stock to
+// the EXACT batches an invoice line originally drew from (never the newest
+// batch, never a generic pool).
 async function restoreAllocations(allocations, session) {
   for (const alloc of allocations) {
     await StockBatch.updateOne(
@@ -127,8 +147,15 @@ async function restoreAllocations(allocations, session) {
   }
 }
 
-// ─── Consume Explicit Allocations (WRITE) ────────────────────────────────
-
+// Consumes the EXACT batches the client explicitly chose (e.g. the cashier
+// picked Batch B in Place Order, overriding the pure-FIFO default). Unlike
+// computeAllocation, this does not decide which batches to draw from — it
+// trusts the caller's choice, but still validates stock and still uses the
+// same optimistic-concurrency guard as consumeAllocations so two cashiers
+// can never double-spend the same units.
+//
+// explicitAllocations: [{ batchNumber, qty }] — matched by batchNo, which is
+// unique per StockBatch, so this is safe without needing the batch's Mongo id.
 async function consumeExplicitAllocations(productId, explicitAllocations, session) {
   const results = [];
   for (const alloc of explicitAllocations) {
@@ -173,7 +200,6 @@ module.exports = {
   consumeExplicitAllocations,
   restoreAllocations,
 };
-
 
 //----------- 01.08.2026 ---------------------
 // // services/fifoAllocationService.js
