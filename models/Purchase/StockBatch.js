@@ -1,3 +1,4 @@
+
 const mongoose = require("mongoose");
 
 const StockBatchSchema = new mongoose.Schema(
@@ -11,19 +12,12 @@ const StockBatchSchema = new mongoose.Schema(
     inwardDate: { type: Date, default: Date.now },
     purchasePrice: { type: Number, required: true },
 
-    // Selling prices AS RECORDED AT THE TIME THIS BATCH WAS PURCHASED (only
-    // set if the user actually edited them on the Purchase Entry — see
-    // purchaseController's numOrUndefined). Kept per-batch (not just on the
-    // Product) so switching pricing mode on a specific batch in Place Order,
-    // or picking Batch A vs Batch B, reflects THAT batch's own price history
-    // instead of only ever showing the product's current price. When a batch
-    // has no override for a given mode (legacy batches, or fields left blank),
-    // callers fall back to the product's current price for that mode.
-    mrp: { type: Number },
-    itemCost: { type: Number },
-    distributorPrice: { type: Number },
-    retailerPrice: { type: Number },
-    walkinPrice: { type: Number },
+    // ✅ Selling price fields - these are the ones missing before
+    mrp: { type: Number, default: 0 },
+    itemCost: { type: Number, default: 0 },
+    distributorPrice: { type: Number, default: 0 },
+    retailerPrice: { type: Number, default: 0 },
+    walkinPrice: { type: Number, default: 0 },
 
     quantityPurchased: { type: Number, required: true },
     quantityAvailable: { type: Number, required: true },
@@ -34,9 +28,9 @@ const StockBatchSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Stock Aging / FIFO-LIFO / Non-Moving Stock reports all filter/sort by these
-StockBatchSchema.index({ productId: 1, inwardDate: 1 }); // FIFO ordering per product
-StockBatchSchema.index({ productId: 1, quantityAvailable: 1 }); // find batches with remaining stock
+// Indexes
+StockBatchSchema.index({ productId: 1, inwardDate: 1 });
+StockBatchSchema.index({ productId: 1, quantityAvailable: 1 });
 StockBatchSchema.index({ purchaseEntryId: 1 });
 StockBatchSchema.index({ expiryDate: 1 });
 
