@@ -12,7 +12,7 @@ const StockBatchSchema = new mongoose.Schema(
     inwardDate: { type: Date, default: Date.now },
     purchasePrice: { type: Number, required: true },
 
-    // ✅ Selling price fields - these are the ones missing before
+    // ✅ Selling price fields - these were missing before
     mrp: { type: Number, default: 0 },
     itemCost: { type: Number, default: 0 },
     distributorPrice: { type: Number, default: 0 },

@@ -162,7 +162,7 @@ async function runPurchaseSave(body, createdBy, session) {
     const batchNo = formatBatchNo(dateStamp, batchSeq);
     batchSeq += 1;
 
-    // ─── Save to PurchaseEntry.products ────────────────────────────────
+    // ─── 1. Save to PurchaseEntry.products ────────────────────────────────
     lineItems.push({
       productId: productDoc._id,
       sku: productDoc.sku,
@@ -180,7 +180,7 @@ async function runPurchaseSave(body, createdBy, session) {
       walkinPrice: numOrUndefined(p.walkinPrice),
     });
 
-    // ─── ✅ FIX: Save to StockBatch with ALL price fields ──────────────
+    // ─── ✅ FIX: Save ALL price fields to StockBatch ────────────────────
     stockBatchDocs.push({
       productId: productDoc._id,
       batchNo,
