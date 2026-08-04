@@ -624,6 +624,8 @@ exports.getProductPriceHistory = async (req, res) => {
 
 // ─── NEW: Product Batches for OrderCartPage ─────────────────────────────────
 
+// controllers/purchaseController.js
+
 exports.getProductBatches = async (req, res) => {
   try {
     const { productIds } = req.body;
@@ -634,20 +636,21 @@ exports.getProductBatches = async (req, res) => {
 
     // Filter valid ObjectIds
     const validIds = productIds.filter(id => mongoose.Types.ObjectId.isValid(id));
-    
     if (validIds.length === 0) {
       return res.json({});
     }
 
     const objectIds = validIds.map(id => new mongoose.Types.ObjectId(id));
 
-    // Aggregate to get last 2 batches per product
+    // Aggregation pipeline: get last 2 batches per product (newest first)
     const result = await PurchaseEntry.aggregate([
+      // Unwind products array
       { $unwind: "$products" },
+      
+      // Match requested products
       { $match: { "products.productId": { $in: objectIds } } },
-      {
-        $sort: { invoiceDate: -1, createdAt: -1 }
-      },
+      
+      // Group by product ID and collect all batches
       {
         $group: {
           _id: "$products.productId",
@@ -664,28 +667,32 @@ exports.getProductBatches = async (req, res) => {
               retailerPrice: "$products.retailerPrice",
               walkinPrice: "$products.walkinPrice",
               invoiceDate: "$invoiceDate",
-              invoiceNumber: "$invoiceNumber"
+              invoiceNumber: "$invoiceNumber",
+              purchaseNumber: "$purchaseNumber"
             }
           }
         }
       },
+      // Sort batches by invoiceDate descending and take first 2
       {
-        $project: {
-          _id: 1,
+        $addFields: {
           batches: {
-            $slice: ["$batches", 2]  // Get only last 2 batches
+            $slice: [
+              { $sortArray: { input: "$batches", sortBy: { invoiceDate: -1 } } },
+              2
+            ]
           }
         }
       }
     ]);
 
-    // Format response as { productId: [batch1, batch2] }
+    // Format as { productId: [batch1, batch2] }
     const formattedResult = {};
     result.forEach(item => {
       formattedResult[item._id.toString()] = item.batches;
     });
 
-    // Also include products that have no batches
+    // Include products with no batches
     validIds.forEach(id => {
       if (!formattedResult[id]) {
         formattedResult[id] = [];
