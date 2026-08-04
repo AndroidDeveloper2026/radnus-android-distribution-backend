@@ -512,6 +512,13 @@ exports.getOrderCartBatches = async (req, res) => {
       });
     });
 
+    // Confirms in server logs (not just the browser) that this deployed
+    // build is actually running and what it found — check this if the
+    // Order Cart page still shows "No batches yet" after a redeploy.
+    console.log(
+      `[getOrderCartBatches] found ${batches.length} batch(es) with stock across ${Object.keys(byProduct).length} product(s)`
+    );
+
     res.json(byProduct);
   } catch (err) {
     console.error("getOrderCartBatches error:", err);
@@ -723,6 +730,8 @@ exports.updatePurchaseEntry = async (req, res) => {
     res.status(400).json({ msg: err.message });
   }
 };
+
+
 
 
 
