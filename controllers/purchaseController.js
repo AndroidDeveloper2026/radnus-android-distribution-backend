@@ -491,38 +491,71 @@ exports.getNonMovingStock = async (req, res) => {
 exports.getOrderCartBatches = async (req, res) => {
   try {
     const { productId } = req.query;
-    const filter = { quantityAvailable: { $gt: 0 } };
+    
+    // Build filter - show ALL batches, even those with 0 stock
+    // This allows the UI to show "Out of Stock" for empty batches
+    const filter = {};
     if (productId) filter.productId = productId;
 
-    const batches = await StockBatch.find(filter).sort({ productId: 1, inwardDate: 1 });
+    // Log the filter being used for debugging
+    console.log('[getOrderCartBatches] Filter:', JSON.stringify(filter));
+
+    // Find all batches (including out of stock) so we can show them all
+    const batches = await StockBatch.find(filter)
+      .populate('productId', 'name sku retailerPrice distributorPrice walkinPrice mrp')
+      .sort({ productId: 1, inwardDate: 1 })
+      .lean();
+
+    console.log(`[getOrderCartBatches] Found ${batches.length} batch(es) total`);
+    
+    // Log sample batch for debugging
+    if (batches.length > 0) {
+      console.log('[getOrderCartBatches] Sample batch:', JSON.stringify({
+        id: batches[0]._id,
+        productId: batches[0].productId,
+        batchNo: batches[0].batchNo,
+        quantityAvailable: batches[0].quantityAvailable,
+        retailerPrice: batches[0].retailerPrice,
+        distributorPrice: batches[0].distributorPrice,
+        walkinPrice: batches[0].walkinPrice,
+        mrp: batches[0].mrp,
+      }));
+    }
 
     const byProduct = {};
     batches.forEach((b) => {
-      const pid = String(b.productId);
+      const pid = String(b.productId?._id || b.productId);
+      if (!pid) {
+        console.warn('[getOrderCartBatches] Batch missing productId:', b.batchNo);
+        return;
+      }
+      
       if (!byProduct[pid]) byProduct[pid] = [];
+      
+      // Ensure all fields are properly set with fallbacks
       byProduct[pid].push({
         batchId: b._id,
-        batchNo: b.batchNo,
-        stock: b.quantityAvailable,
-        inwardDate: b.inwardDate,
-        retailerPrice: b.retailerPrice ?? 0,
-        distributorPrice: b.distributorPrice ?? 0,
-        walkinPrice: b.walkinPrice ?? 0,
-        mrp: b.mrp ?? 0,
+        batchNo: b.batchNo || 'Unknown',
+        stock: b.quantityAvailable || 0,
+        inwardDate: b.inwardDate || new Date(),
+        // Get prices from batch, fallback to product's current prices
+        retailerPrice: b.retailerPrice ?? b.productId?.retailerPrice ?? 0,
+        distributorPrice: b.distributorPrice ?? b.productId?.distributorPrice ?? 0,
+        walkinPrice: b.walkinPrice ?? b.productId?.walkinPrice ?? 0,
+        mrp: b.mrp ?? b.productId?.mrp ?? 0,
       });
     });
 
-    // Confirms in server logs (not just the browser) that this deployed
-    // build is actually running and what it found — check this if the
-    // Order Cart page still shows "No batches yet" after a redeploy.
+    // Log summary
+    const productCount = Object.keys(byProduct).length;
     console.log(
-      `[getOrderCartBatches] found ${batches.length} batch(es) with stock across ${Object.keys(byProduct).length} product(s)`
+      `[getOrderCartBatches] ${batches.length} batch(es) across ${productCount} product(s)`
     );
 
     res.json(byProduct);
   } catch (err) {
-    console.error("getOrderCartBatches error:", err);
-    res.status(500).json({ msg: err.message });
+    console.error("[getOrderCartBatches] Error:", err);
+    res.status(500).json({ msg: err.message || 'Failed to fetch batches' });
   }
 };
 
@@ -730,10 +763,6 @@ exports.updatePurchaseEntry = async (req, res) => {
     res.status(400).json({ msg: err.message });
   }
 };
-
-
-
-
 
 //========== working code of Batches deepseek ============
 
