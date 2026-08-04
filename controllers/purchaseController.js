@@ -480,82 +480,98 @@ exports.getNonMovingStock = async (req, res) => {
 
 // ─── Order Cart batches (must be declared before "/:id" route) ──────────────
 //
-// Returns every batch that still has stock, grouped by productId, so the
-// Order Cart page can populate each product card's batch dropdown with its
-// own stock + retailer/distributor/walk-in/MRP prices without an extra
-// round trip per product. Batches are FIFO-ordered (oldest inward date
-// first) within each product, matching the sell-oldest-stock-first
-// convention used everywhere else in this codebase (Stock Aging, batch
-// sequence numbering).
+// Returns every batch grouped by productId, so the Order Cart page can 
+// populate each product card's batch dropdown with its own stock + prices.
+// Batches are FIFO-ordered (oldest inward date first) within each product.
 
 exports.getOrderCartBatches = async (req, res) => {
   try {
     const { productId } = req.query;
     
-    // Build filter - show ALL batches, even those with 0 stock
-    // This allows the UI to show "Out of Stock" for empty batches
+    // Build filter - get ALL batches
     const filter = {};
-    if (productId) filter.productId = productId;
+    if (productId) {
+      filter.productId = productId;
+    }
 
-    // Log the filter being used for debugging
     console.log('[getOrderCartBatches] Filter:', JSON.stringify(filter));
 
-    // Find all batches (including out of stock) so we can show them all
+    // CRITICAL FIX: Populate productId to get the actual product data
     const batches = await StockBatch.find(filter)
-      .populate('productId', 'name sku retailerPrice distributorPrice walkinPrice mrp')
+      .populate({
+        path: 'productId',
+        select: '_id name sku retailerPrice distributorPrice walkinPrice mrp'
+      })
       .sort({ productId: 1, inwardDate: 1 })
       .lean();
 
     console.log(`[getOrderCartBatches] Found ${batches.length} batch(es) total`);
-    
-    // Log sample batch for debugging
-    if (batches.length > 0) {
-      console.log('[getOrderCartBatches] Sample batch:', JSON.stringify({
-        id: batches[0]._id,
-        productId: batches[0].productId,
-        batchNo: batches[0].batchNo,
-        quantityAvailable: batches[0].quantityAvailable,
-        retailerPrice: batches[0].retailerPrice,
-        distributorPrice: batches[0].distributorPrice,
-        walkinPrice: batches[0].walkinPrice,
-        mrp: batches[0].mrp,
-      }));
-    }
 
+    // CRITICAL FIX: Group by productId STRICTLY
     const byProduct = {};
+    
     batches.forEach((b) => {
-      const pid = String(b.productId?._id || b.productId);
+      // IMPORTANT: Get the product ID from the populated productId field
+      let pid = null;
+      
+      if (b.productId && typeof b.productId === 'object') {
+        // If productId is populated, use its _id
+        pid = String(b.productId._id);
+      } else if (b.productId) {
+        // If productId is just an ID string
+        pid = String(b.productId);
+      }
+      
       if (!pid) {
         console.warn('[getOrderCartBatches] Batch missing productId:', b.batchNo);
         return;
       }
       
-      if (!byProduct[pid]) byProduct[pid] = [];
+      // Initialize array for this product if not exists
+      if (!byProduct[pid]) {
+        byProduct[pid] = [];
+      }
       
-      // Ensure all fields are properly set with fallbacks
+      // Get product data for fallback prices
+      const productData = (b.productId && typeof b.productId === 'object') ? b.productId : null;
+      
+      // Push batch data with proper product context
       byProduct[pid].push({
         batchId: b._id,
         batchNo: b.batchNo || 'Unknown',
         stock: b.quantityAvailable || 0,
         inwardDate: b.inwardDate || new Date(),
-        // Get prices from batch, fallback to product's current prices
-        retailerPrice: b.retailerPrice ?? b.productId?.retailerPrice ?? 0,
-        distributorPrice: b.distributorPrice ?? b.productId?.distributorPrice ?? 0,
-        walkinPrice: b.walkinPrice ?? b.productId?.walkinPrice ?? 0,
-        mrp: b.mrp ?? b.productId?.mrp ?? 0,
+        // CRITICAL: Use batch prices or fallback to product prices
+        retailerPrice: b.retailerPrice ?? productData?.retailerPrice ?? 0,
+        distributorPrice: b.distributorPrice ?? productData?.distributorPrice ?? 0,
+        walkinPrice: b.walkinPrice ?? productData?.walkinPrice ?? 0,
+        mrp: b.mrp ?? productData?.mrp ?? 0,
+        // Include product info for debugging
+        _productId: pid,
+        _productName: productData?.name || 'Unknown'
       });
     });
 
-    // Log summary
+    // Log what we're returning
     const productCount = Object.keys(byProduct).length;
-    console.log(
-      `[getOrderCartBatches] ${batches.length} batch(es) across ${productCount} product(s)`
-    );
+    console.log(`[getOrderCartBatches] ${batches.length} batch(es) across ${productCount} product(s)`);
+    
+    // Log each product's batches for debugging
+    Object.entries(byProduct).forEach(([pid, batchList]) => {
+      console.log(`[getOrderCartBatches] Product ${pid}: ${batchList.length} batches`);
+      batchList.forEach(b => {
+        console.log(`  - ${b.batchNo}: stock=${b.stock}, price=${b.retailerPrice}`);
+      });
+    });
 
     res.json(byProduct);
+    
   } catch (err) {
     console.error("[getOrderCartBatches] Error:", err);
-    res.status(500).json({ msg: err.message || 'Failed to fetch batches' });
+    res.status(500).json({ 
+      msg: err.message || 'Failed to fetch batches',
+      error: err.stack 
+    });
   }
 };
 
