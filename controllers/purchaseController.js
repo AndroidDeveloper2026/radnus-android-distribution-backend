@@ -1,5 +1,6 @@
 
 // controllers/purchaseController.js
+
 const mongoose = require("mongoose");
 
 const PurchaseEntry = require("../models/Purchase/PurchaseEntry");
@@ -223,25 +224,23 @@ async function runPurchaseSave(body, createdBy, session) {
   const invoiceNumber = await generateInvoiceNumber(session, invoiceDate);
 
   const created = await PurchaseEntry.create(
-    [
-      {
-        purchaseNumber,
-        supplier,
-        invoiceNumber,
-        invoiceDate,
-        paymentType: paymentType || "Credit",
-        remarks: remarks || "",
-        products: lineItems,
-        subtotal: round2(subtotal),
-        discount: round2(Number(discount) || 0),
-        gstAmount: round2(gstAmount),
-        grandTotal,
-        paidAmount: paid,
-        dueAmount: due,
-        paymentStatus,
-        createdBy: createdBy || "",
-      },
-    ],
+    [{
+      purchaseNumber,
+      supplier,
+      invoiceNumber,
+      invoiceDate,
+      paymentType: paymentType || "Credit",
+      remarks: remarks || "",
+      products: lineItems,
+      subtotal: round2(subtotal),
+      discount: round2(Number(discount) || 0),
+      gstAmount: round2(gstAmount),
+      grandTotal,
+      paidAmount: paid,
+      dueAmount: due,
+      paymentStatus,
+      createdBy: createdBy || "",
+    }],
     { session }
   );
   const purchaseEntry = created[0];
@@ -627,7 +626,7 @@ exports.getProductPriceHistory = async (req, res) => {
   }
 };
 
-// ─── Product Batches for OrderCartPage ──────────────────────────────────────
+// ─── 🔥 UPDATED: Product Batches for OrderCartPage (Hides Zero Stock) ────
 
 exports.getProductBatches = async (req, res) => {
   try {
@@ -645,49 +644,55 @@ exports.getProductBatches = async (req, res) => {
 
     const objectIds = validIds.map(id => new mongoose.Types.ObjectId(id));
 
-    // Aggregation pipeline to get ALL batches per product (newest first)
-    const result = await PurchaseEntry.aggregate([
-      // Unwind products array
-      { $unwind: "$products" },
-      
-      // Match requested products
-      { $match: { "products.productId": { $in: objectIds } } },
-      
-      // Group by product ID and collect all batches
+    // 🔥 Get batches directly from StockBatch with available quantity > 0
+    // This ensures that batches with zero stock are not returned
+    const stockBatches = await StockBatch.aggregate([
+      { 
+        $match: { 
+          productId: { $in: objectIds },
+          quantityAvailable: { $gt: 0 }  // 🔥 CRITICAL: Only batches with stock
+        } 
+      },
+      {
+        $lookup: {
+          from: "purchaseentries",
+          localField: "purchaseEntryId",
+          foreignField: "_id",
+          as: "purchaseEntry"
+        }
+      },
+      { $unwind: { path: "$purchaseEntry", preserveNullAndEmptyArrays: true } },
       {
         $group: {
-          _id: "$products.productId",
+          _id: "$productId",
           batches: {
             $push: {
-              batchNo: "$products.batchNo",
-              purchasePrice: "$products.purchasePrice",
-              quantity: "$products.quantity",
-              mrp: "$products.mrp",
-              gst: "$products.gst",
-              total: "$products.total",
-              itemCost: "$products.itemCost",
-              distributorPrice: "$products.distributorPrice",
-              retailerPrice: "$products.retailerPrice",
-              walkinPrice: "$products.walkinPrice",
-              invoiceDate: "$invoiceDate",
-              invoiceNumber: "$invoiceNumber",
-              purchaseNumber: "$purchaseNumber"
+              batchNo: "$batchNo",
+              purchasePrice: "$purchasePrice",
+              quantity: "$quantityPurchased",
+              availableQty: "$quantityAvailable",
+              mrp: "$mrp",
+              gst: "$gst",
+              distributorPrice: "$distributorPrice",
+              retailerPrice: "$retailerPrice",
+              walkinPrice: "$walkinPrice",
+              invoiceDate: "$purchaseEntry.invoiceDate",
+              invoiceNumber: "$purchaseEntry.invoiceNumber",
+              purchaseNumber: "$purchaseEntry.purchaseNumber"
             }
           }
         }
       },
-      // Sort batches by invoiceDate descending (newest first)
       {
         $addFields: {
           batches: {
-            $sortArray: { 
-              input: "$batches", 
-              sortBy: { invoiceDate: -1 } 
+            $sortArray: {
+              input: "$batches",
+              sortBy: { invoiceDate: -1 }
             }
           }
         }
       },
-      // Apply limit if specified (0 = all batches)
       ...(limit > 0 ? [{
         $addFields: {
           batches: { $slice: ["$batches", limit] }
@@ -697,7 +702,7 @@ exports.getProductBatches = async (req, res) => {
 
     // Format as { productId: [batch1, batch2, ...] }
     const formattedResult = {};
-    result.forEach(item => {
+    stockBatches.forEach(item => {
       formattedResult[item._id.toString()] = item.batches;
     });
 
