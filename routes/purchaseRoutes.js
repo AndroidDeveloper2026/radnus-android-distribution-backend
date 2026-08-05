@@ -13,6 +13,7 @@ const {
   getPriceHistory,
   getProductPriceHistory,
   getProductBatches, // Add this
+  getProductBatchAvailability
 } = require("../controllers/purchaseController");
 
 router.post("/", auth, createPurchaseEntry);

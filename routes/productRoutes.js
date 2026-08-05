@@ -23,6 +23,6 @@ router.post(
 // routes/productRoutes.js - Add this new route
 
 // Update product stock
-router.patch('/:id/stock', auth, updateProductStock);
+router.patch('/:id/stock', controller.updateProductStock);
 
 module.exports = router;
