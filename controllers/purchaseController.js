@@ -706,6 +706,33 @@ exports.getProductBatches = async (req, res) => {
 
 // ─── FIXED: Get available quantities for product batches ──────────────────────────
 
+// exports.getProductBatchAvailability = async (req, res) => {
+//   try {
+//     const { productId } = req.params;
+    
+//     if (!mongoose.Types.ObjectId.isValid(productId)) {
+//       return res.status(400).json({ msg: 'Invalid product ID' });
+//     }
+
+//     // ✅ FIX: Only return batches with available quantity > 0
+//     const batches = await StockBatch.find({ 
+//       productId: new mongoose.Types.ObjectId(productId),
+//       quantityAvailable: { $gt: 0 }
+//     })
+//     .sort({ inwardDate: 1 })
+//     .select('batchNo quantityAvailable purchasePrice mrp retailerPrice distributorPrice walkinPrice inwardDate');
+
+//     res.json(batches);
+//   } catch (err) {
+//     console.error('getProductBatchAvailability error:', err);
+//     res.status(500).json({ msg: err.message });
+//   }
+// };
+
+// controllers/purchaseController.js - Add this function at the end
+
+// ─── FIXED: Get available quantities for product batches ──────────────────────────
+
 exports.getProductBatchAvailability = async (req, res) => {
   try {
     const { productId } = req.params;
@@ -714,14 +741,16 @@ exports.getProductBatchAvailability = async (req, res) => {
       return res.status(400).json({ msg: 'Invalid product ID' });
     }
 
-    // ✅ FIX: Only return batches with available quantity > 0
+    // ✅ IMPORTANT: Only return batches with quantityAvailable > 0
     const batches = await StockBatch.find({ 
       productId: new mongoose.Types.ObjectId(productId),
-      quantityAvailable: { $gt: 0 }
+      quantityAvailable: { $gt: 0 }  // ← This filters out zero stock
     })
     .sort({ inwardDate: 1 })
     .select('batchNo quantityAvailable purchasePrice mrp retailerPrice distributorPrice walkinPrice inwardDate');
 
+    console.log(`[getProductBatchAvailability] Product ${productId}: Found ${batches.length} batches with available stock`);
+    
     res.json(batches);
   } catch (err) {
     console.error('getProductBatchAvailability error:', err);

@@ -1,5 +1,9 @@
 // controllers/invoiceController.js
+const mongoose = require('mongoose');
 const Invoice = require("../models/Invoice/InvoiceModel");
+const StockBatch = require("../models/Purchase/StockBatch");
+const StockMovement = require("../models/Purchase/StockMovement");
+const Product = require("../models/AdminModel/Product");
 
 const getFinancialYear = () => {
   const now = new Date();
@@ -9,7 +13,11 @@ const getFinancialYear = () => {
 };
 
 const createInvoice = async (req, res) => {
+  const session = await mongoose.startSession();
+  
   try {
+    session.startTransaction();
+    
     const {
       items,
       totalAmount,
@@ -36,16 +44,71 @@ const createInvoice = async (req, res) => {
     } = req.body;
 
     if (!customerPhone || !customerName || !items || !items.length || !totalAmount || !paymentMode) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ message: "Missing required invoice fields" });
     }
 
+    // ✅ STEP 1: Reduce stock for each batch allocation
+    for (const item of items) {
+      if (item.batchAllocations && item.batchAllocations.length > 0) {
+        for (const alloc of item.batchAllocations) {
+          // Find the batch by batchNo
+          const batch = await StockBatch.findOne({ 
+            batchNo: alloc.batchNumber 
+          }).session(session);
+          
+          if (!batch) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(404).json({ 
+              message: `Batch ${alloc.batchNumber} not found` 
+            });
+          }
+          
+          // ✅ Check if enough stock
+          if (batch.quantityAvailable < alloc.qty) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(409).json({ 
+              code: 'INSUFFICIENT_STOCK',
+              message: `Insufficient stock for batch ${alloc.batchNumber}. ` +
+                       `Available: ${batch.quantityAvailable}, Requested: ${alloc.qty}`
+            });
+          }
+          
+          // ✅ Reduce available quantity
+          batch.quantityAvailable -= alloc.qty;
+          await batch.save({ session });
+          
+          // ✅ Create stock movement (sale)
+          await StockMovement.create([{
+            productId: batch.productId,
+            batchNo: batch.batchNo,
+            type: "sale",
+            quantity: -alloc.qty,  // Negative for sale
+            referenceType: "Invoice",
+          }], { session });
+          
+          // ✅ Reduce product stock (moq)
+          await Product.findByIdAndUpdate(
+            batch.productId,
+            { $inc: { moq: -alloc.qty } },
+            { session }
+          );
+        }
+      }
+    }
+
+    // ✅ STEP 2: Generate invoice number
     const financialYear = getFinancialYear();
-    const lastInvoice = await Invoice.findOne({ financialYear }).sort({ sequence: -1 });
+    const lastInvoice = await Invoice.findOne({ financialYear }).sort({ sequence: -1 }).session(session);
     const nextSequence = lastInvoice ? lastInvoice.sequence + 1 : 1;
     const paddedSequence = String(nextSequence).padStart(3, "0");
     const invoiceNumber = `RC${financialYear}/${paddedSequence}`;
 
-    const invoice = await Invoice.create({
+    // ✅ STEP 3: Create invoice
+    const invoice = await Invoice.create([{
       invoiceNumber,
       financialYear,
       sequence: nextSequence,
@@ -71,20 +134,26 @@ const createInvoice = async (req, res) => {
       invoiceDate: invoiceDate || new Date(),
       orderType: orderType || '',
       priceType: priceType || 'retailerPrice',
-    });
+    }], { session });
 
+    await session.commitTransaction();
+    
     res.status(201).json({
       success: true,
       invoice: {
-        id: invoice._id,
-        invoiceNumber: invoice.invoiceNumber,
-        date: invoice.invoiceDate,
-        totalAmount: invoice.totalAmount,
+        id: invoice[0]._id,
+        invoiceNumber: invoice[0].invoiceNumber,
+        date: invoice[0].invoiceDate,
+        totalAmount: invoice[0].totalAmount,
       },
     });
+    
   } catch (err) {
+    await session.abortTransaction();
     console.error("createInvoice error:", err);
     res.status(500).json({ message: err.message });
+  } finally {
+    session.endSession();
   }
 };
 
@@ -126,7 +195,6 @@ const getInvoices = async (req, res) => {
     }
 
     const invoices = await Invoice.find(query).sort({ createdAt: -1 });
-
     res.json(invoices);
   } catch (err) {
     console.error("getInvoices error:", err);
