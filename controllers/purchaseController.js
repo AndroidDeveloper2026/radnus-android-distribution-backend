@@ -480,98 +480,108 @@ exports.getNonMovingStock = async (req, res) => {
 
 // ─── Order Cart batches (must be declared before "/:id" route) ──────────────
 //
-// Returns every batch grouped by productId, so the Order Cart page can 
-// populate each product card's batch dropdown with its own stock + prices.
-// Batches are FIFO-ordered (oldest inward date first) within each product.
+// Returns every batch that still has stock, grouped by productId, so the
+// Order Cart page can populate each product card's batch dropdown with its
+// own stock + retailer/distributor/walk-in/MRP prices without an extra
+// round trip per product. Batches are FIFO-ordered (oldest inward date
+// first) within each product, matching the sell-oldest-stock-first
+// convention used everywhere else in this codebase (Stock Aging, batch
+// sequence numbering).
 
 exports.getOrderCartBatches = async (req, res) => {
   try {
     const { productId } = req.query;
-    
-    // Build filter - get ALL batches
-    const filter = {};
+    const filter = { quantityAvailable: { $gt: 0 } };
     if (productId) {
-      filter.productId = productId;
+      if (!mongoose.Types.ObjectId.isValid(productId)) {
+        return res.status(400).json({ msg: `"${productId}" is not a valid product id` });
+      }
+      // Strict ObjectId equality — avoids any ambiguity from a raw string
+      // comparison and guards against the "batches leaking across products"
+      // failure mode.
+      filter.productId = new mongoose.Types.ObjectId(productId);
     }
 
-    console.log('[getOrderCartBatches] Filter:', JSON.stringify(filter));
-
-    // CRITICAL FIX: Populate productId to get the actual product data
     const batches = await StockBatch.find(filter)
-      .populate({
-        path: 'productId',
-        select: '_id name sku retailerPrice distributorPrice walkinPrice mrp'
-      })
-      .sort({ productId: 1, inwardDate: 1 })
-      .lean();
+      .populate("productId", "sku name moq")
+      .sort({ productId: 1, inwardDate: 1 }); // oldest first per product (FIFO)
 
-    console.log(`[getOrderCartBatches] Found ${batches.length} batch(es) total`);
-
-    // CRITICAL FIX: Group by productId STRICTLY
     const byProduct = {};
-    
+    const orphaned = [];
+
     batches.forEach((b) => {
-      // IMPORTANT: Get the product ID from the populated productId field
-      let pid = null;
-      
-      if (b.productId && typeof b.productId === 'object') {
-        // If productId is populated, use its _id
-        pid = String(b.productId._id);
-      } else if (b.productId) {
-        // If productId is just an ID string
-        pid = String(b.productId);
-      }
-      
-      if (!pid) {
-        console.warn('[getOrderCartBatches] Batch missing productId:', b.batchNo);
+      // populate() returns null if the referenced Product no longer exists
+      // (deleted product, or a batch left over from bad data) — never show
+      // these; they can't legitimately belong to "this" product screen.
+      if (!b.productId || !b.productId._id) {
+        orphaned.push(b.batchNo);
         return;
       }
-      
-      // Initialize array for this product if not exists
-      if (!byProduct[pid]) {
-        byProduct[pid] = [];
-      }
-      
-      // Get product data for fallback prices
-      const productData = (b.productId && typeof b.productId === 'object') ? b.productId : null;
-      
-      // Push batch data with proper product context
-      byProduct[pid].push({
+      const pid = String(b.productId._id);
+      if (!byProduct[pid]) byProduct[pid] = { moq: Number(b.productId.moq) || 0, batches: [] };
+      byProduct[pid].batches.push({
         batchId: b._id,
-        batchNo: b.batchNo || 'Unknown',
-        stock: b.quantityAvailable || 0,
-        inwardDate: b.inwardDate || new Date(),
-        // CRITICAL: Use batch prices or fallback to product prices
-        retailerPrice: b.retailerPrice ?? productData?.retailerPrice ?? 0,
-        distributorPrice: b.distributorPrice ?? productData?.distributorPrice ?? 0,
-        walkinPrice: b.walkinPrice ?? productData?.walkinPrice ?? 0,
-        mrp: b.mrp ?? productData?.mrp ?? 0,
-        // Include product info for debugging
-        _productId: pid,
-        _productName: productData?.name || 'Unknown'
+        batchNo: b.batchNo,
+        stock: b.quantityAvailable,
+        inwardDate: b.inwardDate,
+        retailerPrice: b.retailerPrice ?? 0,
+        distributorPrice: b.distributorPrice ?? 0,
+        walkinPrice: b.walkinPrice ?? 0,
+        mrp: b.mrp ?? 0,
       });
     });
 
-    // Log what we're returning
-    const productCount = Object.keys(byProduct).length;
-    console.log(`[getOrderCartBatches] ${batches.length} batch(es) across ${productCount} product(s)`);
-    
-    // Log each product's batches for debugging
-    Object.entries(byProduct).forEach(([pid, batchList]) => {
-      console.log(`[getOrderCartBatches] Product ${pid}: ${batchList.length} batches`);
-      batchList.forEach(b => {
-        console.log(`  - ${b.batchNo}: stock=${b.stock}, price=${b.retailerPrice}`);
-      });
+    if (orphaned.length) {
+      console.warn(
+        `[getOrderCartBatches] ${orphaned.length} batch(es) reference a product that no longer exists — excluded: ${orphaned.join(", ")}`
+      );
+    }
+
+    // ── Reconciliation against Product.moq ────────────────────────────────
+    // Sales placed through the OLD order flow (before batch tracking was
+    // wired up) only ever decremented Product.moq — they never touched
+    // StockBatch.quantityAvailable. So for any product sold that way before
+    // this feature went live, the batch totals can be higher than what's
+    // actually left. Product.moq is the one number that's always been kept
+    // accurate, so it's the source of truth: if the batches sum to more
+    // than moq, trim the shortfall off the OLDEST batches first (FIFO — the
+    // oldest stock is the most likely to have already been sold under the
+    // old flow), so the dropdown never offers to sell stock that isn't
+    // really there.
+    const reconciledProductIds = [];
+    const result = {};
+
+    Object.entries(byProduct).forEach(([pid, { moq, batches: list }]) => {
+      const totalBatchStock = list.reduce((sum, b) => sum + b.stock, 0);
+      let overage = totalBatchStock - moq;
+
+      if (overage > 0) {
+        reconciledProductIds.push(pid);
+        for (const b of list) {
+          if (overage <= 0) break;
+          const cut = Math.min(b.stock, overage);
+          b.stock -= cut;
+          overage -= cut;
+        }
+      }
+
+      result[pid] = list.filter((b) => b.stock > 0);
     });
 
-    res.json(byProduct);
-    
+    if (reconciledProductIds.length) {
+      console.warn(
+        `[getOrderCartBatches] reconciled batch totals down to Product.moq for ${reconciledProductIds.length} product(s) (stale pre-batch-tracking sales): ${reconciledProductIds.join(", ")}`
+      );
+    }
+
+    console.log(
+      `[getOrderCartBatches] found ${batches.length} batch(es) with stock across ${Object.keys(result).length} product(s), ${orphaned.length} orphaned, ${reconciledProductIds.length} reconciled`
+    );
+
+    res.json(result);
   } catch (err) {
-    console.error("[getOrderCartBatches] Error:", err);
-    res.status(500).json({ 
-      msg: err.message || 'Failed to fetch batches',
-      error: err.stack 
-    });
+    console.error("getOrderCartBatches error:", err);
+    res.status(500).json({ msg: err.message });
   }
 };
 
