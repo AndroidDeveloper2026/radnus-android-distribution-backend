@@ -1,5 +1,5 @@
-
 // controllers/purchaseController.js
+
 const mongoose = require("mongoose");
 
 const PurchaseEntry = require("../models/Purchase/PurchaseEntry");
@@ -223,25 +223,23 @@ async function runPurchaseSave(body, createdBy, session) {
   const invoiceNumber = await generateInvoiceNumber(session, invoiceDate);
 
   const created = await PurchaseEntry.create(
-    [
-      {
-        purchaseNumber,
-        supplier,
-        invoiceNumber,
-        invoiceDate,
-        paymentType: paymentType || "Credit",
-        remarks: remarks || "",
-        products: lineItems,
-        subtotal: round2(subtotal),
-        discount: round2(Number(discount) || 0),
-        gstAmount: round2(gstAmount),
-        grandTotal,
-        paidAmount: paid,
-        dueAmount: due,
-        paymentStatus,
-        createdBy: createdBy || "",
-      },
-    ],
+    [{
+      purchaseNumber,
+      supplier,
+      invoiceNumber,
+      invoiceDate,
+      paymentType: paymentType || "Credit",
+      remarks: remarks || "",
+      products: lineItems,
+      subtotal: round2(subtotal),
+      discount: round2(Number(discount) || 0),
+      gstAmount: round2(gstAmount),
+      grandTotal,
+      paidAmount: paid,
+      dueAmount: due,
+      paymentStatus,
+      createdBy: createdBy || "",
+    }],
     { session }
   );
   const purchaseEntry = created[0];
@@ -627,7 +625,7 @@ exports.getProductPriceHistory = async (req, res) => {
   }
 };
 
-// ─── Product Batches for OrderCartPage ──────────────────────────────────────
+// ─── 🔥 UPDATED: Product Batches for OrderCartPage (Hides Zero Stock) ────
 
 exports.getProductBatches = async (req, res) => {
   try {
@@ -645,49 +643,55 @@ exports.getProductBatches = async (req, res) => {
 
     const objectIds = validIds.map(id => new mongoose.Types.ObjectId(id));
 
-    // Aggregation pipeline to get ALL batches per product (newest first)
-    const result = await PurchaseEntry.aggregate([
-      // Unwind products array
-      { $unwind: "$products" },
-      
-      // Match requested products
-      { $match: { "products.productId": { $in: objectIds } } },
-      
-      // Group by product ID and collect all batches
+    // 🔥 Get batches directly from StockBatch with available quantity > 0
+    // This ensures that batches with zero stock are not returned
+    const stockBatches = await StockBatch.aggregate([
+      { 
+        $match: { 
+          productId: { $in: objectIds },
+          quantityAvailable: { $gt: 0 }  // 🔥 CRITICAL: Only batches with stock
+        } 
+      },
+      {
+        $lookup: {
+          from: "purchaseentries",
+          localField: "purchaseEntryId",
+          foreignField: "_id",
+          as: "purchaseEntry"
+        }
+      },
+      { $unwind: { path: "$purchaseEntry", preserveNullAndEmptyArrays: true } },
       {
         $group: {
-          _id: "$products.productId",
+          _id: "$productId",
           batches: {
             $push: {
-              batchNo: "$products.batchNo",
-              purchasePrice: "$products.purchasePrice",
-              quantity: "$products.quantity",
-              mrp: "$products.mrp",
-              gst: "$products.gst",
-              total: "$products.total",
-              itemCost: "$products.itemCost",
-              distributorPrice: "$products.distributorPrice",
-              retailerPrice: "$products.retailerPrice",
-              walkinPrice: "$products.walkinPrice",
-              invoiceDate: "$invoiceDate",
-              invoiceNumber: "$invoiceNumber",
-              purchaseNumber: "$purchaseNumber"
+              batchNo: "$batchNo",
+              purchasePrice: "$purchasePrice",
+              quantity: "$quantityPurchased",
+              availableQty: "$quantityAvailable",
+              mrp: "$mrp",
+              gst: "$gst",
+              distributorPrice: "$distributorPrice",
+              retailerPrice: "$retailerPrice",
+              walkinPrice: "$walkinPrice",
+              invoiceDate: "$purchaseEntry.invoiceDate",
+              invoiceNumber: "$purchaseEntry.invoiceNumber",
+              purchaseNumber: "$purchaseEntry.purchaseNumber"
             }
           }
         }
       },
-      // Sort batches by invoiceDate descending (newest first)
       {
         $addFields: {
           batches: {
-            $sortArray: { 
-              input: "$batches", 
-              sortBy: { invoiceDate: -1 } 
+            $sortArray: {
+              input: "$batches",
+              sortBy: { invoiceDate: -1 }
             }
           }
         }
       },
-      // Apply limit if specified (0 = all batches)
       ...(limit > 0 ? [{
         $addFields: {
           batches: { $slice: ["$batches", limit] }
@@ -697,7 +701,7 @@ exports.getProductBatches = async (req, res) => {
 
     // Format as { productId: [batch1, batch2, ...] }
     const formattedResult = {};
-    result.forEach(item => {
+    stockBatches.forEach(item => {
       formattedResult[item._id.toString()] = item.batches;
     });
 
@@ -715,7 +719,7 @@ exports.getProductBatches = async (req, res) => {
   }
 };
 
-//============== 04.08.26 ==================
+//--------- working 05.08.26 non stock reduce --------------
 // // controllers/purchaseController.js
 // const mongoose = require("mongoose");
 
@@ -729,34 +733,19 @@ exports.getProductBatches = async (req, res) => {
 
 // const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
-// // Returns a valid number, or undefined if the value is missing/blank/NaN —
-// // used so optional reference-price edits only overwrite the product when
-// // the user actually typed something, never wiping existing values with 0.
 // const numOrUndefined = (v) => {
 //   if (v === undefined || v === null || v === "") return undefined;
 //   const n = Number(v);
 //   return Number.isNaN(n) ? undefined : n;
 // };
 
-// // Indian financial year (Apr–Mar) for a given date, e.g. "2026-2027"
 // function getFinancialYear(date) {
 //   const d = date ? new Date(date) : new Date();
 //   const y = d.getFullYear();
-//   const fyStart = d.getMonth() >= 3 ? y : y - 1; // April (month index 3) starts the FY
+//   const fyStart = d.getMonth() >= 3 ? y : y - 1;
 //   return `${fyStart}-${fyStart + 1}`;
 // }
 
-// // e.g. PUR00045 — scans ALL purchase numbers and increments the highest suffix.
-// //
-// // NOTE: this used to just take the single most-recently-created document
-// // (sort by createdAt) and increment its suffix. That breaks as soon as two
-// // documents share a createdAt — which happens whenever data is bulk-imported
-// // (e.g. a JSON restore), since every imported row typically gets the same
-// // timestamp. Mongo's sort is not guaranteed to break createdAt ties in
-// // purchaseNumber order, so the "last" document picked could be an old one
-// // with a low suffix, causing generatePurchaseNumber to hand out a number
-// // that already exists → E11000 duplicate key on purchaseNumber_1. Scanning
-// // for the true max avoids that regardless of createdAt values.
 // async function generatePurchaseNumber(session) {
 //   const docs = await PurchaseEntry.find({}, { purchaseNumber: 1 })
 //     .session(session || null)
@@ -773,20 +762,12 @@ exports.getProductBatches = async (req, res) => {
 //   return `PUR${String(maxSeq + 1).padStart(5, "0")}`;
 // }
 
-// // e.g. RC2026-2027/PUC/001 — "RC" + Indian financial year (Apr–Mar) of the
-// // invoice date + "/PUC/" (Purchase module code) + a 3-digit sequence that
-// // resets every financial year. This is the auto-generated Invoice Number
-// // (replaces manual entry — see runPurchaseSave).
 // async function generateInvoiceNumber(session, date) {
 //   const fy = getFinancialYear(date);
 //   const prefix = `RC${fy}/PUC/`;
 //   const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 //   const regex = new RegExp(`^${escapedPrefix}(\\d+)$`);
 
-//   // Same reasoning as generatePurchaseNumber above: scan for the true max
-//   // sequence within this financial year's prefix rather than trusting a
-//   // createdAt-sorted "last" document, which is unreliable when rows share
-//   // a createdAt (e.g. after a bulk import).
 //   const docs = await PurchaseEntry.find({ invoiceNumber: regex }, { invoiceNumber: 1 })
 //     .session(session || null)
 //     .lean();
@@ -804,8 +785,6 @@ exports.getProductBatches = async (req, res) => {
 //   return `${prefix}${String(nextSeq).padStart(3, "0")}`;
 // }
 
-// // e.g. B20260713-001 — date-stamped (YYYYMMDD of the invoice date), with a
-// // running 3-digit sequence that resets each day across ALL products.
 // function formatDateStamp(date) {
 //   const d = date ? new Date(date) : new Date();
 //   const y = d.getFullYear();
@@ -818,19 +797,10 @@ exports.getProductBatches = async (req, res) => {
 //   return `B${dateStamp}-${String(seq).padStart(3, "0")}`;
 // }
 
-// // Reads the highest existing sequence already used for this date stamp.
-// // NOTE: this only looks at the DB, so when a single purchase has several
-// // line items, the caller must increment the sequence locally for each
-// // subsequent item rather than calling this again (sibling batches for the
-// // same purchase aren't inserted yet, so re-querying would hand out
-// // duplicates). See runPurchaseSave's use of `batchSeq++`.
 // async function getNextBatchSeq(dateStamp, session) {
 //   const prefix = `B${dateStamp}-`;
 //   const regex = new RegExp(`^${prefix}(\\d+)$`);
 
-//   // Same reasoning as generatePurchaseNumber: scan for the true max instead
-//   // of trusting a createdAt-sorted "last" document (unreliable on ties,
-//   // e.g. after a bulk import).
 //   const docs = await StockBatch.find({ batchNo: regex }, { batchNo: 1 })
 //     .session(session || null)
 //     .lean();
@@ -848,7 +818,6 @@ exports.getProductBatches = async (req, res) => {
 //   return nextSeq;
 // }
 
-// // Weighted-average cost: blends existing stock value with the new purchase
 // function computeAverageCost(product, qty, purchasePrice) {
 //   const existingQty = Number(product.moq) || 0;
 //   const existingAvg =
@@ -861,8 +830,8 @@ exports.getProductBatches = async (req, res) => {
 //   return round2((existingQty * existingAvg + qty * purchasePrice) / newQty);
 // }
 
-// // Core save routine — shared by the transactional path and the
-// // non-transactional fallback (standalone MongoDB without a replica set).
+// // ─── Core Save Routine ──────────────────────────────────────────────────────
+
 // async function runPurchaseSave(body, createdBy, session) {
 //   const {
 //     supplier,
@@ -890,9 +859,6 @@ exports.getProductBatches = async (req, res) => {
 //   const movementDocs = [];
 //   const productUpdates = [];
 
-//   // Batch numbers are date-stamped (e.g. B20260713-001) with a sequence that
-//   // resets daily and runs across every product. Fetched once here, then
-//   // incremented locally per line item below — see getNextBatchSeq's note.
 //   const dateStamp = formatDateStamp(invoiceDate);
 //   let batchSeq = await getNextBatchSeq(dateStamp, session);
 
@@ -943,6 +909,10 @@ exports.getProductBatches = async (req, res) => {
 //       quantityAvailable: qty,
 //       rackNo: p.rackNo || "",
 //       expiryDate: p.expiryDate || null,
+//       retailerPrice: numOrUndefined(p.retailerPrice),
+//       distributorPrice: numOrUndefined(p.distributorPrice),
+//       walkinPrice: numOrUndefined(p.walkinPrice),
+//       mrp: Number(p.mrp) || productDoc.mrp || 0,
 //     });
 
 //     productUpdates.push({
@@ -960,7 +930,7 @@ exports.getProductBatches = async (req, res) => {
 //       productId: productDoc._id,
 //       batchNo,
 //       type: "purchase",
-//       quantity: qty, // positive = stock in
+//       quantity: qty,
 //       referenceType: "PurchaseEntry",
 //     });
 //   }
@@ -1020,7 +990,7 @@ exports.getProductBatches = async (req, res) => {
 //   return purchaseEntry;
 // }
 
-// // ─── Create Purchase Entry (transactional, with fallback) ───────────────────
+// // ─── Create Purchase Entry ───────────────────────────────────────────────────
 
 // exports.createPurchaseEntry = async (req, res) => {
 //   const createdBy = req.user?.name || req.user?.email || req.user?.id || "";
@@ -1094,7 +1064,48 @@ exports.getProductBatches = async (req, res) => {
 //   }
 // };
 
-// // ─── Stock Aging (must be declared before "/:id" route) ─────────────────────
+// // ─── Get Single Purchase Entry ──────────────────────────────────────────────
+
+// exports.getPurchaseEntryById = async (req, res) => {
+//   try {
+//     const entry = await PurchaseEntry.findById(req.params.id).populate(
+//       "supplier",
+//       "name mobile gstNo address"
+//     );
+//     if (!entry) return res.status(404).json({ msg: "Purchase entry not found" });
+//     res.json(entry);
+//   } catch (err) {
+//     console.error("getPurchaseEntryById error:", err);
+//     res.status(500).json({ msg: err.message });
+//   }
+// };
+
+// // ─── Update Purchase Entry ────────────────────────────────────────────────────
+
+// exports.updatePurchaseEntry = async (req, res) => {
+//   try {
+//     const { paymentType, remarks, paidAmount } = req.body;
+//     const entry = await PurchaseEntry.findById(req.params.id);
+//     if (!entry) return res.status(404).json({ msg: "Purchase entry not found" });
+
+//     if (paymentType !== undefined) entry.paymentType = paymentType;
+//     if (remarks !== undefined) entry.remarks = remarks;
+//     if (paidAmount !== undefined) {
+//       const paid = round2(Number(paidAmount) || 0);
+//       entry.paidAmount = paid;
+//       entry.dueAmount = round2(entry.grandTotal - paid);
+//       entry.paymentStatus = entry.dueAmount <= 0 ? "paid" : paid > 0 ? "partial" : "unpaid";
+//     }
+
+//     await entry.save();
+//     res.json(entry);
+//   } catch (err) {
+//     console.error("updatePurchaseEntry error:", err);
+//     res.status(400).json({ msg: err.message });
+//   }
+// };
+
+// // ─── Stock Aging ─────────────────────────────────────────────────────────────
 
 // exports.getStockAging = async (req, res) => {
 //   try {
@@ -1130,7 +1141,7 @@ exports.getProductBatches = async (req, res) => {
 //   }
 // };
 
-// // ─── Non-Moving Stock (must be declared before "/:id" route) ─────────────────
+// // ─── Non-Moving Stock ────────────────────────────────────────────────────────
 
 // exports.getNonMovingStock = async (req, res) => {
 //   try {
@@ -1188,7 +1199,7 @@ exports.getProductBatches = async (req, res) => {
 //   }
 // };
 
-// // ─── Price History (per product, across all past purchases) ─────────────────
+// // ─── Price History ───────────────────────────────────────────────────────────
 
 // exports.getPriceHistory = async (req, res) => {
 //   try {
@@ -1243,24 +1254,15 @@ exports.getProductBatches = async (req, res) => {
 
 //     const productObjectId = new mongoose.Types.ObjectId(productId);
 
-//     // 1. Get product information
 //     const product = await Product.findById(productObjectId);
 //     if (!product) {
 //       return res.status(404).json({ msg: "Product not found" });
 //     }
 
-//     // 2. Get all purchases containing this product
 //     const purchases = await PurchaseEntry.aggregate([
-//       // Match documents that contain the product
 //       { $match: { "products.productId": productObjectId } },
-      
-//       // Unwind products array
 //       { $unwind: "$products" },
-      
-//       // Match the specific product
 //       { $match: { "products.productId": productObjectId } },
-      
-//       // Lookup supplier
 //       {
 //         $lookup: {
 //           from: "suppliers",
@@ -1270,8 +1272,6 @@ exports.getProductBatches = async (req, res) => {
 //         }
 //       },
 //       { $unwind: { path: "$supplierInfo", preserveNullAndEmptyArrays: true } },
-      
-//       // Project required fields
 //       {
 //         $project: {
 //           purchaseNumber: 1,
@@ -1300,12 +1300,9 @@ exports.getProductBatches = async (req, res) => {
 //           paymentStatus: 1
 //         }
 //       },
-      
-//       // Sort by purchase date (newest first)
 //       { $sort: { purchaseDate: -1, createdAt: -1 } }
 //     ]);
 
-//     // 3. Calculate summary statistics
 //     const history = purchases.map(p => ({
 //       ...p,
 //       purchaseId: p._id
@@ -1324,7 +1321,6 @@ exports.getProductBatches = async (req, res) => {
 //       lastPurchaseDate: history.length > 0 ? history[0].purchaseDate : null
 //     };
 
-//     // 4. Prepare product info
 //     const productInfo = {
 //       _id: product._id,
 //       name: product.name,
@@ -1352,44 +1348,90 @@ exports.getProductBatches = async (req, res) => {
 //   }
 // };
 
-// // ─── Get Single Purchase Entry ──────────────────────────────────────────────
+// // ─── Product Batches for OrderCartPage ──────────────────────────────────────
 
-// exports.getPurchaseEntryById = async (req, res) => {
+// exports.getProductBatches = async (req, res) => {
 //   try {
-//     const entry = await PurchaseEntry.findById(req.params.id).populate(
-//       "supplier",
-//       "name mobile gstNo address"
-//     );
-//     if (!entry) return res.status(404).json({ msg: "Purchase entry not found" });
-//     res.json(entry);
-//   } catch (err) {
-//     console.error("getPurchaseEntryById error:", err);
-//     res.status(500).json({ msg: err.message });
-//   }
-// };
-
-// // ─── Update Purchase Entry (header-only) ────────────────────────────────────
-
-// exports.updatePurchaseEntry = async (req, res) => {
-//   try {
-//     const { paymentType, remarks, paidAmount } = req.body;
-//     const entry = await PurchaseEntry.findById(req.params.id);
-//     if (!entry) return res.status(404).json({ msg: "Purchase entry not found" });
-
-//     if (paymentType !== undefined) entry.paymentType = paymentType;
-//     if (remarks !== undefined) entry.remarks = remarks;
-//     if (paidAmount !== undefined) {
-//       const paid = round2(Number(paidAmount) || 0);
-//       entry.paidAmount = paid;
-//       entry.dueAmount = round2(entry.grandTotal - paid);
-//       entry.paymentStatus = entry.dueAmount <= 0 ? "paid" : paid > 0 ? "partial" : "unpaid";
+//     const { productIds, limit = 0 } = req.body;
+    
+//     if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
+//       return res.status(400).json({ msg: "Product IDs are required" });
 //     }
 
-//     await entry.save();
-//     res.json(entry);
+//     // Filter valid ObjectIds
+//     const validIds = productIds.filter(id => mongoose.Types.ObjectId.isValid(id));
+//     if (validIds.length === 0) {
+//       return res.json({});
+//     }
+
+//     const objectIds = validIds.map(id => new mongoose.Types.ObjectId(id));
+
+//     // Aggregation pipeline to get ALL batches per product (newest first)
+//     const result = await PurchaseEntry.aggregate([
+//       // Unwind products array
+//       { $unwind: "$products" },
+      
+//       // Match requested products
+//       { $match: { "products.productId": { $in: objectIds } } },
+      
+//       // Group by product ID and collect all batches
+//       {
+//         $group: {
+//           _id: "$products.productId",
+//           batches: {
+//             $push: {
+//               batchNo: "$products.batchNo",
+//               purchasePrice: "$products.purchasePrice",
+//               quantity: "$products.quantity",
+//               mrp: "$products.mrp",
+//               gst: "$products.gst",
+//               total: "$products.total",
+//               itemCost: "$products.itemCost",
+//               distributorPrice: "$products.distributorPrice",
+//               retailerPrice: "$products.retailerPrice",
+//               walkinPrice: "$products.walkinPrice",
+//               invoiceDate: "$invoiceDate",
+//               invoiceNumber: "$invoiceNumber",
+//               purchaseNumber: "$purchaseNumber"
+//             }
+//           }
+//         }
+//       },
+//       // Sort batches by invoiceDate descending (newest first)
+//       {
+//         $addFields: {
+//           batches: {
+//             $sortArray: { 
+//               input: "$batches", 
+//               sortBy: { invoiceDate: -1 } 
+//             }
+//           }
+//         }
+//       },
+//       // Apply limit if specified (0 = all batches)
+//       ...(limit > 0 ? [{
+//         $addFields: {
+//           batches: { $slice: ["$batches", limit] }
+//         }
+//       }] : [])
+//     ]);
+
+//     // Format as { productId: [batch1, batch2, ...] }
+//     const formattedResult = {};
+//     result.forEach(item => {
+//       formattedResult[item._id.toString()] = item.batches;
+//     });
+
+//     // Include products with no batches
+//     validIds.forEach(id => {
+//       if (!formattedResult[id]) {
+//         formattedResult[id] = [];
+//       }
+//     });
+
+//     res.json(formattedResult);
 //   } catch (err) {
-//     console.error("updatePurchaseEntry error:", err);
-//     res.status(400).json({ msg: err.message });
+//     console.error("getProductBatches error:", err);
+//     res.status(500).json({ msg: err.message || "Failed to fetch product batches" });
 //   }
 // };
-
