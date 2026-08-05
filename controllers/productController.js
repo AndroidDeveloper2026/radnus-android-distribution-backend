@@ -113,3 +113,34 @@ exports.bulkUploadProducts = async (req, res) => {
   await Product.insertMany(data);
   res.json({ message: "Bulk upload successful", count: data.length });
 };
+
+
+
+// controllers/productController.js - Add this new function
+
+// ─── NEW: Update product stock after order ─────────────────────────────────────
+
+exports.updateProductStock = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quantity } = req.body; // Negative for reduction
+    
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ msg: 'Product not found' });
+    }
+    
+    // Update stock (moq)
+    const newStock = Math.max(0, (product.moq || 0) + quantity);
+    product.moq = newStock;
+    await product.save();
+    
+    res.json({ 
+      success: true, 
+      id: product._id, 
+      newStock 
+    });
+  } catch (err) {
+    res.status(500).json({ msg: err.message });
+  }
+};

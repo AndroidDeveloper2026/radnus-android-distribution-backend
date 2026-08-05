@@ -20,4 +20,9 @@ router.post(
   controller.bulkUploadProducts,
 );
 
+// routes/productRoutes.js - Add this new route
+
+// Update product stock
+router.patch('/:id/stock', auth, updateProductStock);
+
 module.exports = router;

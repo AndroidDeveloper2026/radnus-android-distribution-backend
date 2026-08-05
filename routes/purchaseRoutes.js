@@ -31,6 +31,11 @@ router.post("/product-batches", auth, getProductBatches);
 router.get("/:id", auth, getPurchaseEntryById);
 router.put("/:id", auth, updatePurchaseEntry);
 
+// routes/purchaseRoutes.js - Add this new route
+
+// Get available batch quantities for a product (for order cart)
+router.get('/product-batches/:productId/availability', auth, getProductBatchAvailability);
+
 module.exports = router;
 
 //========== 04.08.26 ==============

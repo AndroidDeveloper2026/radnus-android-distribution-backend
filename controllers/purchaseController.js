@@ -714,3 +714,30 @@ exports.getProductBatches = async (req, res) => {
     res.status(500).json({ msg: err.message || "Failed to fetch product batches" });
   }
 };
+
+
+// controllers/purchaseController.js - Add this new function
+
+// ─── NEW: Get available quantities for product batches ──────────────────────────
+
+exports.getProductBatchAvailability = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ msg: 'Invalid product ID' });
+    }
+
+    const batches = await StockBatch.find({ 
+      productId: new mongoose.Types.ObjectId(productId),
+      quantityAvailable: { $gt: 0 }
+    })
+    .sort({ inwardDate: 1 })
+    .select('batchNo quantityAvailable purchasePrice mrp retailerPrice distributorPrice walkinPrice inwardDate');
+
+    res.json(batches);
+  } catch (err) {
+    console.error('getProductBatchAvailability error:', err);
+    res.status(500).json({ msg: err.message });
+  }
+};
