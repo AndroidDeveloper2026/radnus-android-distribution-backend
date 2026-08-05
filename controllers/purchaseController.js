@@ -625,7 +625,7 @@ exports.getProductPriceHistory = async (req, res) => {
   }
 };
 
-// ─── 🔥 UPDATED: Product Batches for OrderCartPage (Hides Zero Stock) ────
+// ─── 🔥 FIXED: Product Batches for OrderCartPage ──────────────────────────
 
 exports.getProductBatches = async (req, res) => {
   try {
@@ -643,13 +643,12 @@ exports.getProductBatches = async (req, res) => {
 
     const objectIds = validIds.map(id => new mongoose.Types.ObjectId(id));
 
-    // 🔥 Get batches directly from StockBatch with available quantity > 0
-    // This ensures that batches with zero stock are not returned
+    // 🔥 CRITICAL: Only get batches with quantityAvailable > 0
     const stockBatches = await StockBatch.aggregate([
       { 
         $match: { 
           productId: { $in: objectIds },
-          quantityAvailable: { $gt: 0 }  // 🔥 CRITICAL: Only batches with stock
+          quantityAvailable: { $gt: 0 }  // 🔥 THIS LINE HIDES ZERO STOCK BATCHES
         } 
       },
       {
@@ -671,7 +670,6 @@ exports.getProductBatches = async (req, res) => {
               quantity: "$quantityPurchased",
               availableQty: "$quantityAvailable",
               mrp: "$mrp",
-              gst: "$gst",
               distributorPrice: "$distributorPrice",
               retailerPrice: "$retailerPrice",
               walkinPrice: "$walkinPrice",
@@ -705,7 +703,7 @@ exports.getProductBatches = async (req, res) => {
       formattedResult[item._id.toString()] = item.batches;
     });
 
-    // Include products with no batches
+    // Include products with no valid batches (empty array)
     validIds.forEach(id => {
       if (!formattedResult[id]) {
         formattedResult[id] = [];
