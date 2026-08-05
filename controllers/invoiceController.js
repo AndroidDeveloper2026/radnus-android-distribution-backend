@@ -585,3 +585,4 @@ exports.getInvoiceByNumber = async (req, res) => {
 //   updateInvoiceStatus,
 //   deleteInvoice, // ← Don't forget to add to routes!
 // };
+
