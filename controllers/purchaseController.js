@@ -1,3 +1,4 @@
+
 // controllers/purchaseController.js
 const mongoose = require("mongoose");
 
@@ -187,6 +188,10 @@ async function runPurchaseSave(body, createdBy, session) {
       quantityAvailable: qty,
       rackNo: p.rackNo || "",
       expiryDate: p.expiryDate || null,
+      retailerPrice: numOrUndefined(p.retailerPrice),
+      distributorPrice: numOrUndefined(p.distributorPrice),
+      walkinPrice: numOrUndefined(p.walkinPrice),
+      mrp: Number(p.mrp) || productDoc.mrp || 0,
     });
 
     productUpdates.push({
@@ -622,13 +627,11 @@ exports.getProductPriceHistory = async (req, res) => {
   }
 };
 
-// ─── NEW: Product Batches for OrderCartPage ─────────────────────────────────
-
-// controllers/purchaseController.js
+// ─── Product Batches for OrderCartPage ──────────────────────────────────────
 
 exports.getProductBatches = async (req, res) => {
   try {
-    const { productIds } = req.body;
+    const { productIds, limit = 0 } = req.body;
     
     if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
       return res.status(400).json({ msg: "Product IDs are required" });
@@ -642,7 +645,7 @@ exports.getProductBatches = async (req, res) => {
 
     const objectIds = validIds.map(id => new mongoose.Types.ObjectId(id));
 
-    // Aggregation pipeline: get last 2 batches per product (newest first)
+    // Aggregation pipeline to get ALL batches per product (newest first)
     const result = await PurchaseEntry.aggregate([
       // Unwind products array
       { $unwind: "$products" },
@@ -673,20 +676,26 @@ exports.getProductBatches = async (req, res) => {
           }
         }
       },
-      // Sort batches by invoiceDate descending and take first 2
+      // Sort batches by invoiceDate descending (newest first)
       {
         $addFields: {
           batches: {
-            $slice: [
-              { $sortArray: { input: "$batches", sortBy: { invoiceDate: -1 } } },
-              2
-            ]
+            $sortArray: { 
+              input: "$batches", 
+              sortBy: { invoiceDate: -1 } 
+            }
           }
         }
-      }
+      },
+      // Apply limit if specified (0 = all batches)
+      ...(limit > 0 ? [{
+        $addFields: {
+          batches: { $slice: ["$batches", limit] }
+        }
+      }] : [])
     ]);
 
-    // Format as { productId: [batch1, batch2] }
+    // Format as { productId: [batch1, batch2, ...] }
     const formattedResult = {};
     result.forEach(item => {
       formattedResult[item._id.toString()] = item.batches;
