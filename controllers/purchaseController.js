@@ -627,7 +627,9 @@ exports.getProductPriceHistory = async (req, res) => {
   }
 };
 
-// ─── Product Batches for OrderCartPage ──────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// ✅ FIXED: Product Batches for OrderCartPage - Returns availableQty
+// ════════════════════════════════════════════════════════════════════════════
 
 exports.getProductBatches = async (req, res) => {
   try {
@@ -644,6 +646,7 @@ exports.getProductBatches = async (req, res) => {
 
     const objectIds = validIds.map(id => new mongoose.Types.ObjectId(id));
 
+    // ✅ Get batch history from PurchaseEntry
     const result = await PurchaseEntry.aggregate([
       { $unwind: "$products" },
       { $match: { "products.productId": { $in: objectIds } } },
@@ -654,7 +657,7 @@ exports.getProductBatches = async (req, res) => {
             $push: {
               batchNo: "$products.batchNo",
               purchasePrice: "$products.purchasePrice",
-              quantity: "$products.quantity",
+              quantityPurchased: "$products.quantity",
               mrp: "$products.mrp",
               gst: "$products.gst",
               total: "$products.total",
@@ -686,11 +689,34 @@ exports.getProductBatches = async (req, res) => {
       }] : [])
     ]);
 
+    // ✅ STEP 2: Get available quantities from StockBatch for each batch
     const formattedResult = {};
-    result.forEach(item => {
-      formattedResult[item._id.toString()] = item.batches;
-    });
+    
+    for (const item of result) {
+      const productId = item._id.toString();
+      const batches = item.batches;
+      
+      // Get available quantities for all batches of this product
+      const batchNos = batches.map(b => b.batchNo);
+      const stockBatches = await StockBatch.find({
+        productId: new mongoose.Types.ObjectId(productId),
+        batchNo: { $in: batchNos }
+      }).select('batchNo quantityAvailable');
+      
+      // Create map of batchNo -> quantityAvailable
+      const availMap = {};
+      stockBatches.forEach(sb => {
+        availMap[sb.batchNo] = sb.quantityAvailable || 0;
+      });
+      
+      // ✅ Add availableQty to each batch
+      formattedResult[productId] = batches.map(batch => ({
+        ...batch,
+        availableQty: availMap[batch.batchNo] || 0
+      }));
+    }
 
+    // Include products with no batches
     validIds.forEach(id => {
       if (!formattedResult[id]) {
         formattedResult[id] = [];
@@ -704,34 +730,9 @@ exports.getProductBatches = async (req, res) => {
   }
 };
 
-// ─── FIXED: Get available quantities for product batches ──────────────────────────
-
-// exports.getProductBatchAvailability = async (req, res) => {
-//   try {
-//     const { productId } = req.params;
-    
-//     if (!mongoose.Types.ObjectId.isValid(productId)) {
-//       return res.status(400).json({ msg: 'Invalid product ID' });
-//     }
-
-//     // ✅ FIX: Only return batches with available quantity > 0
-//     const batches = await StockBatch.find({ 
-//       productId: new mongoose.Types.ObjectId(productId),
-//       quantityAvailable: { $gt: 0 }
-//     })
-//     .sort({ inwardDate: 1 })
-//     .select('batchNo quantityAvailable purchasePrice mrp retailerPrice distributorPrice walkinPrice inwardDate');
-
-//     res.json(batches);
-//   } catch (err) {
-//     console.error('getProductBatchAvailability error:', err);
-//     res.status(500).json({ msg: err.message });
-//   }
-// };
-
-// controllers/purchaseController.js - Add this function at the end
-
-// ─── FIXED: Get available quantities for product batches ──────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// ✅ FIXED: Get available quantities - Only returns batches with stock > 0
+// ════════════════════════════════════════════════════════════════════════════
 
 exports.getProductBatchAvailability = async (req, res) => {
   try {

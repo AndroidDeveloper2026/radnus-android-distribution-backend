@@ -1,15 +1,4 @@
 // models/Purchase/StockBatch.js
-//
-// FIX: this file was entirely commented out — `require("../models/Purchase/StockBatch")`
-// was resolving to an empty module, so every StockBatch.find/.insertMany call in
-// purchaseController.js (getNextBatchSeq, runPurchaseSave, getStockAging,
-// getNonMovingStock) and the "StockBatch" ref in InvoiceModel.js was silently broken.
-// Restored the schema and added per-batch sell prices, which is the missing piece
-// needed for batch-wise pricing: each batch now remembers the retailer/distributor/
-// walk-in/MRP prices it was purchased in at (falling back to the product's current
-// prices at insert time — see purchaseController.js), instead of only the moving
-// average purchasePrice it already tracked.
-
 const mongoose = require("mongoose");
 
 const StockBatchSchema = new mongoose.Schema(
@@ -23,15 +12,14 @@ const StockBatchSchema = new mongoose.Schema(
     inwardDate: { type: Date, default: Date.now },
     purchasePrice: { type: Number, required: true },
 
-    quantityPurchased: { type: Number, required: true },
-    quantityAvailable: { type: Number, required: true },
+    // ✅ IMPORTANT: These two fields are critical
+    quantityPurchased: { type: Number, required: true },   // Original purchased quantity
+    quantityAvailable: { type: Number, required: true },   // Current available quantity
 
     rackNo: { type: String, default: "" },
     expiryDate: { type: Date, default: null },
 
-    // NEW — the four sell prices this batch was created with. Optional so any
-    // pre-existing batches (created before this field existed) still validate;
-    // callers should fall back to the product's current flat price when null.
+    // Sell prices per batch
     retailerPrice: { type: Number, default: null },
     distributorPrice: { type: Number, default: null },
     walkinPrice: { type: Number, default: null },
@@ -41,15 +29,14 @@ const StockBatchSchema = new mongoose.Schema(
 );
 
 // Stock Aging / FIFO-LIFO / Non-Moving Stock reports all filter/sort by these
-StockBatchSchema.index({ productId: 1, inwardDate: 1 }); // FIFO ordering per product
-StockBatchSchema.index({ productId: 1, quantityAvailable: 1 }); // find batches with remaining stock
+StockBatchSchema.index({ productId: 1, inwardDate: 1 });
+StockBatchSchema.index({ productId: 1, quantityAvailable: 1 });
 StockBatchSchema.index({ purchaseEntryId: 1 });
 StockBatchSchema.index({ expiryDate: 1 });
 
 module.exports = mongoose.model("StockBatch", StockBatchSchema);
 
-
-//======== not need stock batch ==================
+//---------- old working code before qty ---------------
 // const mongoose = require("mongoose");
 
 // const StockBatchSchema = new mongoose.Schema(
@@ -68,6 +55,14 @@ module.exports = mongoose.model("StockBatch", StockBatchSchema);
 
 //     rackNo: { type: String, default: "" },
 //     expiryDate: { type: Date, default: null },
+
+//     // NEW — the four sell prices this batch was created with. Optional so any
+//     // pre-existing batches (created before this field existed) still validate;
+//     // callers should fall back to the product's current flat price when null.
+//     retailerPrice: { type: Number, default: null },
+//     distributorPrice: { type: Number, default: null },
+//     walkinPrice: { type: Number, default: null },
+//     mrp: { type: Number, default: null },
 //   },
 //   { timestamps: true }
 // );
@@ -79,36 +74,3 @@ module.exports = mongoose.model("StockBatch", StockBatchSchema);
 // StockBatchSchema.index({ expiryDate: 1 });
 
 // module.exports = mongoose.model("StockBatch", StockBatchSchema);
-
-// //------------------------------------------------------------------
-
-// // const mongoose = require("mongoose");
-
-// // const StockBatchSchema = new mongoose.Schema(
-// //   {
-// //     productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
-// //     purchaseEntryId: { type: mongoose.Schema.Types.ObjectId, ref: "PurchaseEntry", required: true },
-
-// //     // Auto-generated e.g. SKU-0001
-// //     batchNo: { type: String, required: true, unique: true },
-
-// //     inwardDate: { type: Date, default: Date.now },
-// //     purchasePrice: { type: Number, required: true },
-
-// //     quantityPurchased: { type: Number, required: true },
-// //     quantityAvailable: { type: Number, required: true },
-
-// //     rackNo: { type: String, default: "" },
-// //     expiryDate: { type: Date, default: null },
-// //   },
-// //   { timestamps: true }
-// // );
-
-// // // Stock Aging / FIFO-LIFO / Non-Moving Stock reports all filter/sort by these
-// // StockBatchSchema.index({ batchNo: 1 }, { unique: true });
-// // StockBatchSchema.index({ productId: 1, inwardDate: 1 }); // FIFO ordering per product
-// // StockBatchSchema.index({ productId: 1, quantityAvailable: 1 }); // find batches with remaining stock
-// // StockBatchSchema.index({ purchaseEntryId: 1 });
-// // StockBatchSchema.index({ expiryDate: 1 });
-
-// // module.exports = mongoose.model("StockBatch", StockBatchSchema);
