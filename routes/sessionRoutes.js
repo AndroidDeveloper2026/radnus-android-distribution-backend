@@ -1,4 +1,4 @@
-// sessionRoutes.js - COMPLETE PRODUCTION VERSION
+// sessionRoutes.js
 
 const express = require('express');
 const router = express.Router();
@@ -7,13 +7,8 @@ const Location = require('../models/LocationModel/Location');
 const calculateDistance = require('../utils/distance');
 const { runExclusive } = require('../utils/sessionLock');
 
-// ✅ NOTE: Add your auth middleware here, e.g.:
-// const authMiddleware = require('../middleware/auth');
-// router.use(authMiddleware);
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
-const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // run cleanup every hour
-
-// ─── DAY BOUNDARY HELPERS ─────────────────────────────────────────────────
 function getStartOfToday() {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -24,41 +19,51 @@ function isFromPreviousDay(date) {
   return new Date(date) < getStartOfToday();
 }
 
-// ─── AUTO-END A SINGLE STALE SESSION ─────────────────────────────────────
-// A session is "stale" once its startTime falls before today's midnight —
-// i.e. it belongs to a previous calendar day.
+// ✅ FIX (root cause #1): guarantee the session's locked start point is
+// present as the first point when rebuilding route/distance from Location.
+// Older/in-flight sessions may be missing it there (start point was only
+// ever written to Session.startLocation, not to the Location collection),
+// which silently dropped the first segment's distance and the start marker
+// on every reconciliation. New sessions get the Location doc directly from
+// POST /start (see below); this is the defensive fallback for sessions
+// created before that fix.
+function withStartPoint(session, locations) {
+  if (!session.startLocation) return locations;
+  const start = {
+    latitude: session.startLocation.latitude,
+    longitude: session.startLocation.longitude,
+    timestamp: session.startTime,
+  };
+  const first = locations[0];
+  const alreadyPresent = first &&
+    Math.abs(first.latitude - start.latitude) < 0.000001 &&
+    Math.abs(first.longitude - start.longitude) < 0.000001;
+  return alreadyPresent ? locations : [start, ...locations];
+}
+
 async function autoEndSessionIfStale(session) {
   if (!session || session.status !== 'ACTIVE') return session;
   if (!isFromPreviousDay(session.startTime)) return session;
 
   return runExclusive(session._id, async () => {
-    // Re-fetch inside the lock in case another request already ended it
-    // while we were waiting our turn in the queue.
     const fresh = await Session.findById(session._id);
     if (!fresh || fresh.status !== 'ACTIVE') return fresh || session;
 
     let totalDistanceKm = fresh.totalDistanceKm || 0;
     let pointCount = fresh.pointCount || fresh.route.length;
     try {
-      const locations = await Location.find({ sessionId: fresh._id })
-        .sort({ timestamp: 1 })
-        .lean();
+      let locations = await Location.find({ sessionId: fresh._id }).sort({ timestamp: 1 }).lean();
+      locations = withStartPoint(fresh, locations);
 
       let recalculated = 0;
       for (let i = 1; i < locations.length; i++) {
         recalculated += calculateDistance(
-          locations[i - 1].latitude,
-          locations[i - 1].longitude,
-          locations[i].latitude,
-          locations[i].longitude,
+          locations[i - 1].latitude, locations[i - 1].longitude,
+          locations[i].latitude, locations[i].longitude,
         );
       }
-      if (locations.length > 1) {
-        totalDistanceKm = recalculated;
-      }
-      if (locations.length > 0) {
-        pointCount = locations.length;
-      }
+      if (locations.length > 1) totalDistanceKm = recalculated;
+      if (locations.length > 0) pointCount = locations.length;
     } catch (distErr) {
       console.log('⚠️ Could not recalculate distance during auto-end:', distErr.message);
     }
@@ -74,14 +79,9 @@ async function autoEndSessionIfStale(session) {
   });
 }
 
-// ─── HOURLY SWEEP (safety net) ────────────────────────────────────────────
 async function cleanupStaleSessions() {
   try {
-    const staleSessions = await Session.find({
-      status: 'ACTIVE',
-      startTime: { $lt: getStartOfToday() },
-    });
-
+    const staleSessions = await Session.find({ status: 'ACTIVE', startTime: { $lt: getStartOfToday() } });
     for (const session of staleSessions) {
       await autoEndSessionIfStale(session);
     }
@@ -90,72 +90,45 @@ async function cleanupStaleSessions() {
   }
 }
 
-// Run cleanup on startup
 cleanupStaleSessions();
 setInterval(cleanupStaleSessions, CLEANUP_INTERVAL_MS);
 
-// ─── GET ALL SESSIONS (paginated) ────────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
-    console.log('📥 GET /api/session called');
-
     const page = parseInt(req.query.page, 10) || 1;
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
     const skip = (page - 1) * limit;
-
     const { userId, status } = req.query;
     const filter = {};
     if (userId) filter.userId = userId;
     if (status) filter.status = status;
 
     const [sessions, total] = await Promise.all([
-      Session.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .select('-route'),
+      Session.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).select('-route'),
       Session.countDocuments(filter),
     ]);
 
-    res.status(200).json({
-      success: true,
-      sessions,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    });
+    res.status(200).json({ success: true, sessions, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
   } catch (err) {
     console.log('❌ Error fetching sessions:', err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ─── CHECK TODAY'S SESSION ───────────────────────────────────────────────────
 router.get('/today/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-
-    if (!userId) {
-      return res.status(400).json({ message: 'userId is required' });
-    }
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
 
     const startOfDay = getStartOfToday();
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
 
     const session = await Session.findOne({
-      userId,
-      status: { $in: ['ACTIVE', 'AUTO_ENDED'] },
-      startTime: { $gte: startOfDay, $lte: endOfDay },
+      userId, status: { $in: ['ACTIVE', 'AUTO_ENDED'] }, startTime: { $gte: startOfDay, $lte: endOfDay },
     });
 
-    if (!session) {
-      return res.status(404).json({ message: 'No active session today' });
-    }
-
+    if (!session) return res.status(404).json({ message: 'No active session today' });
     res.json(session);
   } catch (err) {
     console.log('❌ Error in /today/:userId:', err);
@@ -163,26 +136,13 @@ router.get('/today/:userId', async (req, res) => {
   }
 });
 
-// ─── ORPHANED SESSION CHECK (for app-start recovery) ─────────────────────────
 router.get('/orphaned/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
 
-    if (!userId) {
-      return res.status(400).json({ message: 'userId is required' });
-    }
-
-    // Same day-boundary rule as everywhere else
-    const orphaned = await Session.findOne({
-      userId,
-      status: 'ACTIVE',
-      startTime: { $lt: getStartOfToday() },
-    });
-
-    if (!orphaned) {
-      return res.status(404).json({ message: 'No orphaned session found' });
-    }
-
+    const orphaned = await Session.findOne({ userId, status: 'ACTIVE', startTime: { $lt: getStartOfToday() } });
+    if (!orphaned) return res.status(404).json({ message: 'No orphaned session found' });
     res.json(orphaned);
   } catch (err) {
     console.log('❌ Error checking orphaned session:', err.message);
@@ -190,38 +150,24 @@ router.get('/orphaned/:userId', async (req, res) => {
   }
 });
 
-// ─── START SESSION ───────────────────────────────────────────────────────────
 router.post('/start', async (req, res) => {
   try {
     const { userId, latitude, longitude } = req.body;
 
-    if (!userId || userId.toString().trim() === '') {
-      return res.status(400).json({ message: 'userId is required' });
-    }
-    if (latitude === undefined || latitude === null || latitude === '') {
-      return res.status(400).json({ message: 'latitude is required' });
-    }
-    if (longitude === undefined || longitude === null || longitude === '') {
-      return res.status(400).json({ message: 'longitude is required' });
-    }
+    if (!userId || userId.toString().trim() === '') return res.status(400).json({ message: 'userId is required' });
+    if (latitude === undefined || latitude === null || latitude === '') return res.status(400).json({ message: 'latitude is required' });
+    if (longitude === undefined || longitude === null || longitude === '') return res.status(400).json({ message: 'longitude is required' });
 
     const lat = parseFloat(latitude);
     const lng = parseFloat(longitude);
-
-    if (isNaN(lat) || isNaN(lng)) {
-      return res.status(400).json({
-        message: 'latitude and longitude must be valid numbers',
-      });
-    }
+    if (isNaN(lat) || isNaN(lng)) return res.status(400).json({ message: 'latitude and longitude must be valid numbers' });
 
     const startOfDay = getStartOfToday();
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
 
     const existingSession = await Session.findOne({
-      userId,
-      status: { $in: ['ACTIVE', 'AUTO_ENDED'] },
-      startTime: { $gte: startOfDay, $lte: endOfDay },
+      userId, status: { $in: ['ACTIVE', 'AUTO_ENDED'] }, startTime: { $gte: startOfDay, $lte: endOfDay },
     });
 
     if (existingSession) {
@@ -243,50 +189,47 @@ router.post('/start', async (req, res) => {
     const savedSession = await session.save();
     console.log(`✅ Session created - sessionId: ${savedSession._id}, startLocation LOCKED at (${lat}, ${lng})`);
 
+    // ✅ FIX (root cause #1): also persist the start point to Location so
+    // it's always represented in the collection reconciliation reads from.
+    try {
+      await Location.create({
+        userId,
+        sessionId: savedSession._id,
+        latitude: lat,
+        longitude: lng,
+        timestamp: savedSession.startTime,
+      });
+      console.log(`✅ Start point saved to Location for session ${savedSession._id}`);
+    } catch (locErr) {
+      console.error('⚠️ Could not save start point to Location:', locErr.message);
+    }
+
     res.status(201).json(savedSession);
   } catch (err) {
     console.log('❌ ERROR in /start:', err.message);
-    res.status(500).json({
-      message: 'Error starting session',
-      error: err.message,
-      details: err.name === 'ValidationError' ? err.errors : null,
-    });
+    res.status(500).json({ message: 'Error starting session', error: err.message, details: err.name === 'ValidationError' ? err.errors : null });
   }
 });
 
-// ─── END SESSION ─────────────────────────────────────────────────────────────
 router.post('/end', async (req, res) => {
   try {
     const { sessionId, finalLocation } = req.body;
-
-    if (!sessionId) {
-      return res.status(400).json({ message: 'Session ID required' });
-    }
+    if (!sessionId) return res.status(400).json({ message: 'Session ID required' });
 
     console.log(`📤 Ending session: ${sessionId}`);
 
     const session = await runExclusive(sessionId, async () => {
-      // ✅ If finalLocation provided, add it as the last point BEFORE
-      //    recalculating, so it's included in the distance/point totals.
       if (finalLocation && finalLocation.latitude && finalLocation.longitude) {
         try {
           const existing = await Session.findById(sessionId).select('userId').lean();
           if (existing) {
             await Location.create({
-              userId: existing.userId,
-              sessionId,
-              latitude: finalLocation.latitude,
-              longitude: finalLocation.longitude,
+              userId: existing.userId, sessionId,
+              latitude: finalLocation.latitude, longitude: finalLocation.longitude,
               timestamp: new Date(),
             });
             await Session.findByIdAndUpdate(sessionId, {
-              $push: {
-                route: {
-                  latitude: finalLocation.latitude,
-                  longitude: finalLocation.longitude,
-                  timestamp: new Date(),
-                },
-              },
+              $push: { route: { latitude: finalLocation.latitude, longitude: finalLocation.longitude, timestamp: new Date() } },
             });
             console.log('✅ Final location saved');
           }
@@ -295,38 +238,28 @@ router.post('/end', async (req, res) => {
         }
       }
 
-      // ✅ Calculate totalDistanceKm + pointCount from Location records —
-      //    these are the source of truth (each is written independently via
-      //    Location.create and never touched by concurrent writes the way
-      //    the embedded route array historically was).
+      const sessionDoc = await Session.findById(sessionId);
+
       let totalDistanceKm = 0;
       let pointCount = 0;
       try {
-        const locations = await Location.find({ sessionId })
-          .sort({ timestamp: 1 })
-          .lean();
+        let locations = await Location.find({ sessionId }).sort({ timestamp: 1 }).lean();
+        if (sessionDoc) locations = withStartPoint(sessionDoc, locations);
 
         pointCount = locations.length;
         console.log(`📍 Found ${locations.length} location records for session ${sessionId}`);
 
         for (let i = 1; i < locations.length; i++) {
-          const prev = locations[i - 1];
-          const curr = locations[i];
-          const dist = calculateDistance(
-            prev.latitude,
-            prev.longitude,
-            curr.latitude,
-            curr.longitude,
+          totalDistanceKm += calculateDistance(
+            locations[i - 1].latitude, locations[i - 1].longitude,
+            locations[i].latitude, locations[i].longitude,
           );
-          totalDistanceKm += dist;
         }
-
         console.log(`📏 Total distance recalculated: ${totalDistanceKm.toFixed(4)} km`);
       } catch (distErr) {
         console.error('⚠️ Could not calculate distance:', distErr.message);
       }
 
-      // ✅ Update session with recalculated distance + point count
       const updated = await Session.findByIdAndUpdate(
         sessionId,
         {
@@ -341,12 +274,9 @@ router.post('/end', async (req, res) => {
       return updated;
     });
 
-    if (!session) {
-      return res.status(404).json({ message: 'Session not found' });
-    }
+    if (!session) return res.status(404).json({ message: 'Session not found' });
 
     console.log(`✅ Session ended - ${sessionId}, Distance: ${session.totalDistanceKm}km, Points: ${session.pointCount}`);
-
     res.json(session);
   } catch (err) {
     console.error('❌ Error ending session:', err.message);
@@ -354,141 +284,79 @@ router.post('/end', async (req, res) => {
   }
 });
 
-// ─── MANUAL CLEANUP TRIGGER (for admin / ops use) ────────────────────────────
 router.post('/cleanup', async (req, res) => {
   try {
     await cleanupStaleSessions();
-
     const incompleteResult = await Session.updateMany(
-      {
-        status: 'ACTIVE',
-        startTime: { $lt: getStartOfToday() },
-        $or: [{ route: { $size: 0 } }, { route: { $exists: false } }],
-      },
+      { status: 'ACTIVE', startTime: { $lt: getStartOfToday() }, $or: [{ route: { $size: 0 } }, { route: { $exists: false } }] },
       { status: 'ENDED', endTime: new Date() },
     );
-
-    res.json({
-      success: true,
-      message: 'Cleanup completed',
-      incompleteSessionsClosed: incompleteResult.modifiedCount || 0,
-    });
+    res.json({ success: true, message: 'Cleanup completed', incompleteSessionsClosed: incompleteResult.modifiedCount || 0 });
   } catch (err) {
     console.log('❌ Error running manual cleanup:', err.message);
     res.status(500).json({ message: 'Error running cleanup', error: err.message });
   }
 });
 
-// ─── RECALCULATE DISTANCE FOR A SESSION ──────────────────────────────────────
 router.post('/recalculate/:sessionId', async (req, res) => {
   try {
     const { sessionId } = req.params;
-
-    const locations = await Location.find({ sessionId })
-      .sort({ timestamp: 1 })
-      .lean();
+    const locations = await Location.find({ sessionId }).sort({ timestamp: 1 }).lean();
 
     if (locations.length < 2) {
-      return res.json({ 
-        success: true, 
-        message: 'Not enough points to calculate distance',
-        distance: 0,
-        pointCount: locations.length
-      });
+      return res.json({ success: true, message: 'Not enough points to calculate distance', distance: 0, pointCount: locations.length });
     }
 
     let totalDistance = 0;
     for (let i = 1; i < locations.length; i++) {
-      const prev = locations[i - 1];
-      const curr = locations[i];
-      const dist = calculateDistance(
-        prev.latitude,
-        prev.longitude,
-        curr.latitude,
-        curr.longitude,
+      totalDistance += calculateDistance(
+        locations[i - 1].latitude, locations[i - 1].longitude,
+        locations[i].latitude, locations[i].longitude,
       );
-      totalDistance += dist;
     }
 
-    const session = await Session.findByIdAndUpdate(
-      sessionId,
-      { totalDistanceKm: parseFloat(totalDistance.toFixed(4)) },
-      { new: true }
-    );
-
-    res.json({
-      success: true,
-      pointCount: locations.length,
-      distance: parseFloat(totalDistance.toFixed(4)),
-      session
-    });
-
+    const session = await Session.findByIdAndUpdate(sessionId, { totalDistanceKm: parseFloat(totalDistance.toFixed(4)) }, { new: true });
+    res.json({ success: true, pointCount: locations.length, distance: parseFloat(totalDistance.toFixed(4)), session });
   } catch (err) {
     console.error('❌ Error recalculating distance:', err);
     res.status(500).json({ message: "Error recalculating distance" });
   }
 });
 
-// ─── GET SESSION BY ID ───────────────────────────────────────────────────────
 router.get('/:sessionId', async (req, res) => {
   try {
     const { sessionId } = req.params;
-
     const routePage = parseInt(req.query.routePage, 10) || null;
     const routeLimit = Math.min(parseInt(req.query.routeLimit, 10) || 1000, 5000);
 
     let session = await Session.findById(sessionId);
+    if (!session) return res.status(404).json({ message: 'Session not found' });
 
-    if (!session) {
-      return res.status(404).json({ message: 'Session not found' });
-    }
-
-    // ✅ Auto-end if stale
     session = await autoEndSessionIfStale(session);
 
-    // ✅ For active sessions, rebuild route/distance/pointCount straight from
-    //    the Location collection (each point is written independently via
-    //    Location.create and is never subject to the read-modify-write races
-    //    that used to affect the embedded `route` array). This is what the
-    //    map screen and tracking screen render, so this is what guarantees
-    //    the drawn route and the "X GPS points" / distance figures always
-    //    agree with each other and with reality. Wrapped in the same
-    //    per-session lock as /update so it can't race with an in-flight
-    //    location write.
     if (session.status === 'ACTIVE') {
       session = await runExclusive(sessionId, async () => {
         try {
-          const locations = await Location.find({ sessionId })
-            .sort({ timestamp: 1 })
-            .lean();
+          let locations = await Location.find({ sessionId }).sort({ timestamp: 1 }).lean();
+          locations = withStartPoint(session, locations);
 
           if (locations.length > 0) {
             let recalculatedDist = 0;
             for (let i = 1; i < locations.length; i++) {
               recalculatedDist += calculateDistance(
-                locations[i - 1].latitude,
-                locations[i - 1].longitude,
-                locations[i].latitude,
-                locations[i].longitude,
+                locations[i - 1].latitude, locations[i - 1].longitude,
+                locations[i].latitude, locations[i].longitude,
               );
             }
 
-            const route = locations.map(l => ({
-              latitude: l.latitude,
-              longitude: l.longitude,
-              timestamp: l.timestamp,
-            }));
+            const route = locations.map(l => ({ latitude: l.latitude, longitude: l.longitude, timestamp: l.timestamp }));
 
             const updated = await Session.findByIdAndUpdate(
               sessionId,
-              {
-                totalDistanceKm: parseFloat(recalculatedDist.toFixed(4)),
-                pointCount: locations.length,
-                route,
-              },
+              { totalDistanceKm: parseFloat(recalculatedDist.toFixed(4)), pointCount: locations.length, route },
               { new: true },
             );
-            console.log(`📏 Route/distance synced from Location collection on fetch: ${updated.pointCount} points, ${updated.totalDistanceKm}km`);
+            console.log(`📏 Route/distance synced from Location on fetch: ${updated.pointCount} points, ${updated.totalDistanceKm}km`);
             return updated;
           }
         } catch (distErr) {
@@ -503,12 +371,7 @@ router.get('/:sessionId', async (req, res) => {
       const start = (routePage - 1) * routeLimit;
       const totalPoints = sessionObj.route.length;
       sessionObj.route = sessionObj.route.slice(start, start + routeLimit);
-      sessionObj.routePagination = {
-        page: routePage,
-        limit: routeLimit,
-        total: totalPoints,
-        totalPages: Math.ceil(totalPoints / routeLimit),
-      };
+      sessionObj.routePagination = { page: routePage, limit: routeLimit, total: totalPoints, totalPages: Math.ceil(totalPoints / routeLimit) };
       return res.json(sessionObj);
     }
 
@@ -521,7 +384,7 @@ router.get('/:sessionId', async (req, res) => {
 
 module.exports = router;
 
-//------------- 06.08.26 ------------------------------
+//------------ 08.08.2026 --------------------
 // // sessionRoutes.js - COMPLETE PRODUCTION VERSION
 
 // const express = require('express');
@@ -529,6 +392,7 @@ module.exports = router;
 // const Session = require('../models/FSEModel/Session');
 // const Location = require('../models/LocationModel/Location');
 // const calculateDistance = require('../utils/distance');
+// const { runExclusive } = require('../utils/sessionLock');
 
 // // ✅ NOTE: Add your auth middleware here, e.g.:
 // // const authMiddleware = require('../middleware/auth');
@@ -554,35 +418,47 @@ module.exports = router;
 //   if (!session || session.status !== 'ACTIVE') return session;
 //   if (!isFromPreviousDay(session.startTime)) return session;
 
-//   let totalDistanceKm = session.totalDistanceKm || 0;
-//   try {
-//     const locations = await Location.find({ sessionId: session._id })
-//       .sort({ timestamp: 1 })
-//       .lean();
+//   return runExclusive(session._id, async () => {
+//     // Re-fetch inside the lock in case another request already ended it
+//     // while we were waiting our turn in the queue.
+//     const fresh = await Session.findById(session._id);
+//     if (!fresh || fresh.status !== 'ACTIVE') return fresh || session;
 
-//     let recalculated = 0;
-//     for (let i = 1; i < locations.length; i++) {
-//       recalculated += calculateDistance(
-//         locations[i - 1].latitude,
-//         locations[i - 1].longitude,
-//         locations[i].latitude,
-//         locations[i].longitude,
-//       );
+//     let totalDistanceKm = fresh.totalDistanceKm || 0;
+//     let pointCount = fresh.pointCount || fresh.route.length;
+//     try {
+//       const locations = await Location.find({ sessionId: fresh._id })
+//         .sort({ timestamp: 1 })
+//         .lean();
+
+//       let recalculated = 0;
+//       for (let i = 1; i < locations.length; i++) {
+//         recalculated += calculateDistance(
+//           locations[i - 1].latitude,
+//           locations[i - 1].longitude,
+//           locations[i].latitude,
+//           locations[i].longitude,
+//         );
+//       }
+//       if (locations.length > 1) {
+//         totalDistanceKm = recalculated;
+//       }
+//       if (locations.length > 0) {
+//         pointCount = locations.length;
+//       }
+//     } catch (distErr) {
+//       console.log('⚠️ Could not recalculate distance during auto-end:', distErr.message);
 //     }
-//     if (locations.length > 1) {
-//       totalDistanceKm = recalculated;
-//     }
-//   } catch (distErr) {
-//     console.log('⚠️ Could not recalculate distance during auto-end:', distErr.message);
-//   }
 
-//   session.status = 'AUTO_ENDED';
-//   session.endTime = session.endTime || new Date();
-//   session.totalDistanceKm = parseFloat(totalDistanceKm.toFixed(4));
-//   await session.save();
+//     fresh.status = 'AUTO_ENDED';
+//     fresh.endTime = fresh.endTime || new Date();
+//     fresh.totalDistanceKm = parseFloat(totalDistanceKm.toFixed(4));
+//     fresh.pointCount = pointCount;
+//     await fresh.save();
 
-//   console.log(`🧹 Auto-ended session ${session._id} — belongs to a previous day`);
-//   return session;
+//     console.log(`🧹 Auto-ended session ${fresh._id} — belongs to a previous day`);
+//     return fresh;
+//   });
 // }
 
 // // ─── HOURLY SWEEP (safety net) ────────────────────────────────────────────
@@ -748,6 +624,7 @@ module.exports = router;
 //       route: [{ latitude: lat, longitude: lng, timestamp: new Date() }],
 //       status: 'ACTIVE',
 //       totalDistanceKm: 0,
+//       pointCount: 1,
 //     });
 
 //     const savedSession = await session.save();
@@ -775,64 +652,87 @@ module.exports = router;
 
 //     console.log(`📤 Ending session: ${sessionId}`);
 
-//     // ✅ Calculate totalDistanceKm from Location records
-//     let totalDistanceKm = 0;
-//     try {
-//       const locations = await Location.find({ sessionId })
-//         .sort({ timestamp: 1 })
-//         .lean();
-
-//       console.log(`📍 Found ${locations.length} location records for session ${sessionId}`);
-
-//       for (let i = 1; i < locations.length; i++) {
-//         const prev = locations[i - 1];
-//         const curr = locations[i];
-//         const dist = calculateDistance(
-//           prev.latitude,
-//           prev.longitude,
-//           curr.latitude,
-//           curr.longitude,
-//         );
-//         totalDistanceKm += dist;
+//     const session = await runExclusive(sessionId, async () => {
+//       // ✅ If finalLocation provided, add it as the last point BEFORE
+//       //    recalculating, so it's included in the distance/point totals.
+//       if (finalLocation && finalLocation.latitude && finalLocation.longitude) {
+//         try {
+//           const existing = await Session.findById(sessionId).select('userId').lean();
+//           if (existing) {
+//             await Location.create({
+//               userId: existing.userId,
+//               sessionId,
+//               latitude: finalLocation.latitude,
+//               longitude: finalLocation.longitude,
+//               timestamp: new Date(),
+//             });
+//             await Session.findByIdAndUpdate(sessionId, {
+//               $push: {
+//                 route: {
+//                   latitude: finalLocation.latitude,
+//                   longitude: finalLocation.longitude,
+//                   timestamp: new Date(),
+//                 },
+//               },
+//             });
+//             console.log('✅ Final location saved');
+//           }
+//         } catch (locErr) {
+//           console.error('⚠️ Could not save final location:', locErr.message);
+//         }
 //       }
 
-//       console.log(`📏 Total distance recalculated: ${totalDistanceKm.toFixed(4)} km`);
-//     } catch (distErr) {
-//       console.error('⚠️ Could not calculate distance:', distErr.message);
-//     }
+//       // ✅ Calculate totalDistanceKm + pointCount from Location records —
+//       //    these are the source of truth (each is written independently via
+//       //    Location.create and never touched by concurrent writes the way
+//       //    the embedded route array historically was).
+//       let totalDistanceKm = 0;
+//       let pointCount = 0;
+//       try {
+//         const locations = await Location.find({ sessionId })
+//           .sort({ timestamp: 1 })
+//           .lean();
 
-//     // ✅ Update session with recalculated distance
-//     const session = await Session.findByIdAndUpdate(
-//       sessionId,
-//       {
-//         status: 'ENDED',
-//         endTime: new Date(),
-//         totalDistanceKm: parseFloat(totalDistanceKm.toFixed(4)),
-//       },
-//       { new: true },
-//     );
+//         pointCount = locations.length;
+//         console.log(`📍 Found ${locations.length} location records for session ${sessionId}`);
+
+//         for (let i = 1; i < locations.length; i++) {
+//           const prev = locations[i - 1];
+//           const curr = locations[i];
+//           const dist = calculateDistance(
+//             prev.latitude,
+//             prev.longitude,
+//             curr.latitude,
+//             curr.longitude,
+//           );
+//           totalDistanceKm += dist;
+//         }
+
+//         console.log(`📏 Total distance recalculated: ${totalDistanceKm.toFixed(4)} km`);
+//       } catch (distErr) {
+//         console.error('⚠️ Could not calculate distance:', distErr.message);
+//       }
+
+//       // ✅ Update session with recalculated distance + point count
+//       const updated = await Session.findByIdAndUpdate(
+//         sessionId,
+//         {
+//           status: 'ENDED',
+//           endTime: new Date(),
+//           totalDistanceKm: parseFloat(totalDistanceKm.toFixed(4)),
+//           ...(pointCount > 0 ? { pointCount } : {}),
+//         },
+//         { new: true },
+//       );
+
+//       return updated;
+//     });
 
 //     if (!session) {
 //       return res.status(404).json({ message: 'Session not found' });
 //     }
 
-//     console.log(`✅ Session ended - ${sessionId}, Distance: ${session.totalDistanceKm}km`);
-
-//     // ✅ If finalLocation provided, add it as the last point
-//     if (finalLocation && finalLocation.latitude && finalLocation.longitude) {
-//       try {
-//         await Location.create({
-//           userId: session.userId,
-//           sessionId,
-//           latitude: finalLocation.latitude,
-//           longitude: finalLocation.longitude,
-//           timestamp: new Date(),
-//         });
-//         console.log('✅ Final location saved');
-//       } catch (locErr) {
-//         console.error('⚠️ Could not save final location:', locErr.message);
-//       }
-//     }
+//     console.log(`✅ Session ended - ${sessionId}, Distance: ${session.totalDistanceKm}km, Points: ${session.pointCount}`);
 
 //     res.json(session);
 //   } catch (err) {
@@ -933,31 +833,56 @@ module.exports = router;
 //     // ✅ Auto-end if stale
 //     session = await autoEndSessionIfStale(session);
 
-//     // ✅ Ensure totalDistanceKm is up to date for active sessions
+//     // ✅ For active sessions, rebuild route/distance/pointCount straight from
+//     //    the Location collection (each point is written independently via
+//     //    Location.create and is never subject to the read-modify-write races
+//     //    that used to affect the embedded `route` array). This is what the
+//     //    map screen and tracking screen render, so this is what guarantees
+//     //    the drawn route and the "X GPS points" / distance figures always
+//     //    agree with each other and with reality. Wrapped in the same
+//     //    per-session lock as /update so it can't race with an in-flight
+//     //    location write.
 //     if (session.status === 'ACTIVE') {
-//       try {
-//         const locations = await Location.find({ sessionId })
-//           .sort({ timestamp: 1 })
-//           .lean();
-        
-//         let recalculatedDist = 0;
-//         for (let i = 1; i < locations.length; i++) {
-//           recalculatedDist += calculateDistance(
-//             locations[i-1].latitude,
-//             locations[i-1].longitude,
-//             locations[i].latitude,
-//             locations[i].longitude,
-//           );
+//       session = await runExclusive(sessionId, async () => {
+//         try {
+//           const locations = await Location.find({ sessionId })
+//             .sort({ timestamp: 1 })
+//             .lean();
+
+//           if (locations.length > 0) {
+//             let recalculatedDist = 0;
+//             for (let i = 1; i < locations.length; i++) {
+//               recalculatedDist += calculateDistance(
+//                 locations[i - 1].latitude,
+//                 locations[i - 1].longitude,
+//                 locations[i].latitude,
+//                 locations[i].longitude,
+//               );
+//             }
+
+//             const route = locations.map(l => ({
+//               latitude: l.latitude,
+//               longitude: l.longitude,
+//               timestamp: l.timestamp,
+//             }));
+
+//             const updated = await Session.findByIdAndUpdate(
+//               sessionId,
+//               {
+//                 totalDistanceKm: parseFloat(recalculatedDist.toFixed(4)),
+//                 pointCount: locations.length,
+//                 route,
+//               },
+//               { new: true },
+//             );
+//             console.log(`📏 Route/distance synced from Location collection on fetch: ${updated.pointCount} points, ${updated.totalDistanceKm}km`);
+//             return updated;
+//           }
+//         } catch (distErr) {
+//           console.error('⚠️ Could not recalculate distance on fetch:', distErr.message);
 //         }
-        
-//         if (recalculatedDist > 0) {
-//           session.totalDistanceKm = parseFloat(recalculatedDist.toFixed(4));
-//           await session.save();
-//           console.log(`📏 Distance recalculated on fetch: ${session.totalDistanceKm}km`);
-//         }
-//       } catch (distErr) {
-//         console.error('⚠️ Could not recalculate distance on fetch:', distErr.message);
-//       }
+//         return session;
+//       });
 //     }
 
 //     if (routePage) {
