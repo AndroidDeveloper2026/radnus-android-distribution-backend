@@ -1,3 +1,4 @@
+
 // routes/purchaseRoutes.js
 
 const express = require("express");
@@ -27,11 +28,9 @@ const {
   exportStockBatches,
 } = require("../controllers/purchaseController");
 
-// ─── Purchase CRUD ──────────────────────────────────────────────────
+// ─── Purchase CRUD (list/create only here — ":id" routes moved to the bottom) ──
 router.post("/", auth, createPurchaseEntry);
 router.get("/", auth, getPurchaseEntries);
-router.get("/:id", auth, getPurchaseEntryById);
-router.put("/:id", auth, updatePurchaseEntry);
 
 // ─── Report Routes ──────────────────────────────────────────────────
 // NOTE: These must be declared before "/:id" route
@@ -45,11 +44,18 @@ router.post("/product-batches", auth, getProductBatches);
 router.get("/product-batches/:productId/availability", auth, getProductBatchAvailability);
 
 // ─── Data Explorer Routes ───────────────────────────────────────────
+// NOTE: also must be declared before "/:id" route, otherwise "stock-batches",
+// "filter-options" etc. get swallowed by "/:id" and treated as a Mongo _id.
 router.get("/stock-batches", auth, getStockBatches);
 router.get("/stock-batches/export", auth, exportStockBatches);
 router.get("/filter-options", auth, getFilterOptions);
 
+// ─── Single purchase routes (must come LAST — "/:id" matches anything) ─────
+router.get("/:id", auth, getPurchaseEntryById);
+router.put("/:id", auth, updatePurchaseEntry);
+
 module.exports = router;
+
 
 //---------- 13.08.2026 -------------------
 // // routes/purchaseRoutes.js
