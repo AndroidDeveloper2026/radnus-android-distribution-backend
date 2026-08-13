@@ -13,7 +13,8 @@ const {
   getPriceHistory,
   getProductPriceHistory,
   getProductBatches, // Add this
-  getProductBatchAvailability
+  getProductBatchAvailability,
+  getStockBatches
 } = require("../controllers/purchaseController");
 
 router.post("/", auth, createPurchaseEntry);
@@ -36,6 +37,8 @@ router.put("/:id", auth, updatePurchaseEntry);
 
 // Get available batch quantities for a product (for order cart)
 router.get('/product-batches/:productId/availability', auth, getProductBatchAvailability);
+// Add this route to the existing router
+router.get("/stock-batches", auth, getStockBatches);
 
 module.exports = router;
 
