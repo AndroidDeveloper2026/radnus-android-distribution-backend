@@ -758,9 +758,10 @@ exports.getProductBatchAvailability = async (req, res) => {
   }
 };
 
-// src/controllers/purchaseController.js
+// controllers/purchaseController.js - ADD THESE FUNCTIONS
 
-// ─── Get Stock Batches for Data Explorer ──────────────────────
+// ─── Get Stock Batches for Data Explorer ──────────────────────────────
+
 exports.getStockBatches = async (req, res) => {
   try {
     const {
@@ -778,45 +779,46 @@ exports.getStockBatches = async (req, res) => {
       limit = 50,
     } = req.query;
 
-    // Build filter query
+    // ─── Build Filter Query ──────────────────────────────────────────
     const query = {};
 
-    // ─── Product Filter ──────────────────────────────────────
+    // Product filter
     if (product && product !== 'all' && mongoose.Types.ObjectId.isValid(product)) {
       query.productId = new mongoose.Types.ObjectId(product);
     }
 
-    // ─── Batch No Filter ─────────────────────────────────────
+    // Batch No filter
     if (batchNo && batchNo !== 'all') {
       query.batchNo = { $regex: batchNo, $options: 'i' };
     }
 
-    // ─── Purchase Entry Filter ──────────────────────────────
+    // Purchase Entry filter
     if (purchaseEntry && purchaseEntry !== 'all' && mongoose.Types.ObjectId.isValid(purchaseEntry)) {
       query.purchaseEntryId = new mongoose.Types.ObjectId(purchaseEntry);
     }
 
-    // ─── Rack No Filter ─────────────────────────────────────
+    // Rack No filter
     if (rackNo && rackNo !== 'all') {
       query.rackNo = { $regex: rackNo, $options: 'i' };
     }
 
-    // ─── Inward Date Range ──────────────────────────────────
+    // Inward Date Range
     if (inwardDateFrom) {
       query.inwardDate = { $gte: new Date(inwardDateFrom) };
     }
     if (inwardDateTo) {
+      const toDate = new Date(inwardDateTo);
+      toDate.setHours(23, 59, 59, 999);
       query.inwardDate = { 
         ...query.inwardDate, 
-        $lte: new Date(new Date(inwardDateTo).setHours(23, 59, 59, 999))
+        $lte: toDate
       };
     }
 
-    // ─── Expiry Status ──────────────────────────────────────
+    // Expiry Status
     if (expiryStatus && expiryStatus !== 'all') {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      
       const thirtyDaysFromNow = new Date(today);
       thirtyDaysFromNow.setDate(today.getDate() + 30);
 
@@ -829,7 +831,7 @@ exports.getStockBatches = async (req, res) => {
       }
     }
 
-    // ─── Search ──────────────────────────────────────────────
+    // Global Search
     if (search && search.trim()) {
       const searchRegex = { $regex: search.trim(), $options: 'i' };
       query.$or = [
@@ -838,7 +840,7 @@ exports.getStockBatches = async (req, res) => {
       ];
     }
 
-    // ─── Aggregation Pipeline ────────────────────────────────
+    // ─── Aggregation Pipeline ────────────────────────────────────────
     const pipeline = [
       { $match: query },
       {
@@ -863,11 +865,11 @@ exports.getStockBatches = async (req, res) => {
         $project: {
           _id: 1,
           batchNo: 1,
-          productName: '$product.name',
+          productName: { $ifNull: ['$product.name', '—'] },
           productImage: '$product.image',
-          sku: '$product.sku',
-          purchaseEntry: '$purchase.purchaseNumber',
-          rackNo: 1,
+          sku: { $ifNull: ['$product.sku', '—'] },
+          purchaseEntry: { $ifNull: ['$purchase.purchaseNumber', '—'] },
+          rackNo: { $ifNull: ['$rackNo', '—'] },
           expiryDate: 1,
           inwardDate: 1,
           quantityAvailable: 1,
@@ -893,11 +895,10 @@ exports.getStockBatches = async (req, res) => {
       },
     ];
 
-    // ─── Sorting ──────────────────────────────────────────────
+    // ─── Sorting ──────────────────────────────────────────────────────
     const sortDirectionValue = sortDirection === 'asc' ? 1 : -1;
     const sortObj = {};
     
-    // Map sort keys to actual fields
     const sortKeyMap = {
       batchNo: 'batchNo',
       productName: 'productName',
@@ -911,18 +912,17 @@ exports.getStockBatches = async (req, res) => {
     
     const actualSortKey = sortKeyMap[sortKey] || 'batchNo';
     sortObj[actualSortKey] = sortDirectionValue;
-    
     pipeline.push({ $sort: sortObj });
 
-    // ─── Pagination ──────────────────────────────────────────
+    // ─── Pagination ──────────────────────────────────────────────────
     const skip = (parseInt(page) - 1) * parseInt(limit);
     pipeline.push({ $skip: skip });
     pipeline.push({ $limit: parseInt(limit) });
 
-    // ─── Execute Query ───────────────────────────────────────
+    // ─── Execute Query ──────────────────────────────────────────────
     const data = await StockBatch.aggregate(pipeline);
 
-    // ─── Get Total Count ─────────────────────────────────────
+    // ─── Get Total Count ─────────────────────────────────────────────
     const countPipeline = [
       { $match: query },
       { $count: 'total' }
@@ -939,6 +939,209 @@ exports.getStockBatches = async (req, res) => {
     });
   } catch (err) {
     console.error('getStockBatches error:', err);
+    res.status(500).json({ msg: err.message });
+  }
+};
+
+// ─── Get Filter Options for Data Explorer ──────────────────────────────
+
+exports.getFilterOptions = async (req, res) => {
+  try {
+    // Get all active products
+    const products = await Product.find({ status: 'Active' })
+      .select('_id name sku')
+      .sort({ name: 1 });
+
+    // Get unique batch numbers (only from batches with available stock)
+    const batches = await StockBatch.distinct('batchNo', { quantityAvailable: { $gt: 0 } });
+    
+    // Get unique purchase entry numbers
+    const purchaseEntries = await PurchaseEntry.distinct('purchaseNumber');
+    
+    // Get unique rack numbers (only from batches with available stock)
+    const racks = await StockBatch.distinct('rackNo', { quantityAvailable: { $gt: 0 } });
+
+    res.json({
+      products,
+      batches: batches.filter(b => b && b !== ''),
+      purchaseEntries: purchaseEntries.filter(p => p && p !== ''),
+      racks: racks.filter(r => r && r !== ''),
+    });
+  } catch (err) {
+    console.error('getFilterOptions error:', err);
+    res.status(500).json({ msg: err.message });
+  }
+};
+
+// ─── Export Stock Batches to Excel ──────────────────────────────────────
+
+exports.exportStockBatches = async (req, res) => {
+  try {
+    const {
+      search,
+      product,
+      batchNo,
+      purchaseEntry,
+      rackNo,
+      expiryStatus,
+      inwardDateFrom,
+      inwardDateTo,
+      sortKey = 'batchNo',
+      sortDirection = 'desc',
+    } = req.query;
+
+    // ─── Build Filter Query ──────────────────────────────────────────
+    const query = {};
+
+    if (product && product !== 'all' && mongoose.Types.ObjectId.isValid(product)) {
+      query.productId = new mongoose.Types.ObjectId(product);
+    }
+
+    if (batchNo && batchNo !== 'all') {
+      query.batchNo = { $regex: batchNo, $options: 'i' };
+    }
+
+    if (purchaseEntry && purchaseEntry !== 'all' && mongoose.Types.ObjectId.isValid(purchaseEntry)) {
+      query.purchaseEntryId = new mongoose.Types.ObjectId(purchaseEntry);
+    }
+
+    if (rackNo && rackNo !== 'all') {
+      query.rackNo = { $regex: rackNo, $options: 'i' };
+    }
+
+    if (inwardDateFrom) {
+      query.inwardDate = { $gte: new Date(inwardDateFrom) };
+    }
+    if (inwardDateTo) {
+      const toDate = new Date(inwardDateTo);
+      toDate.setHours(23, 59, 59, 999);
+      query.inwardDate = { 
+        ...query.inwardDate, 
+        $lte: toDate
+      };
+    }
+
+    if (expiryStatus && expiryStatus !== 'all') {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const thirtyDaysFromNow = new Date(today);
+      thirtyDaysFromNow.setDate(today.getDate() + 30);
+
+      if (expiryStatus === 'expired') {
+        query.expiryDate = { $lt: today };
+      } else if (expiryStatus === 'expiring-soon') {
+        query.expiryDate = { $gte: today, $lte: thirtyDaysFromNow };
+      } else if (expiryStatus === 'healthy') {
+        query.expiryDate = { $gt: thirtyDaysFromNow };
+      }
+    }
+
+    if (search && search.trim()) {
+      const searchRegex = { $regex: search.trim(), $options: 'i' };
+      query.$or = [
+        { batchNo: searchRegex },
+        { rackNo: searchRegex },
+      ];
+    }
+
+    // ─── Get Data ─────────────────────────────────────────────────────
+    const batches = await StockBatch.aggregate([
+      { $match: query },
+      {
+        $lookup: {
+          from: 'products',
+          localField: 'productId',
+          foreignField: '_id',
+          as: 'product',
+        },
+      },
+      { $unwind: { path: '$product', preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: 'purchaseentries',
+          localField: 'purchaseEntryId',
+          foreignField: '_id',
+          as: 'purchase',
+        },
+      },
+      { $unwind: { path: '$purchase', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          batchNo: 1,
+          productName: { $ifNull: ['$product.name', '—'] },
+          sku: { $ifNull: ['$product.sku', '—'] },
+          purchaseEntry: { $ifNull: ['$purchase.purchaseNumber', '—'] },
+          rackNo: { $ifNull: ['$rackNo', '—'] },
+          expiryDate: 1,
+          inwardDate: 1,
+          quantityAvailable: 1,
+          quantityPurchased: 1,
+          purchasePrice: 1,
+          expiryStatus: {
+            $cond: [
+              { $and: [{ $ne: ['$expiryDate', null] }, { $lt: ['$expiryDate', new Date()] }] },
+              'Expired',
+              {
+                $cond: [
+                  { $and: [
+                    { $ne: ['$expiryDate', null] },
+                    { $lte: ['$expiryDate', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)] }
+                  ]},
+                  'Expiring Soon',
+                  'Healthy'
+                ]
+              }
+            ]
+          },
+        },
+      },
+    ]);
+
+    // ─── Create Excel File ────────────────────────────────────────────
+    const XLSX = require('xlsx');
+    
+    const data = batches.map((b, i) => ({
+      '#': i + 1,
+      'Batch No': b.batchNo || '—',
+      'Product': b.productName || '—',
+      'SKU': b.sku || '—',
+      'Purchase Entry': b.purchaseEntry || '—',
+      'Rack No': b.rackNo || '—',
+      'Expiry Status': b.expiryStatus || '—',
+      'Inward Date': b.inwardDate ? new Date(b.inwardDate).toLocaleDateString('en-GB') : '—',
+      'Available Qty': b.quantityAvailable || 0,
+      'Quantity Purchased': b.quantityPurchased || 0,
+      'Purchase Price': b.purchasePrice ? Number(b.purchasePrice).toFixed(2) : '—',
+      'Expiry Date': b.expiryDate ? new Date(b.expiryDate).toLocaleDateString('en-GB') : '—',
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Stock Batches');
+
+    // Set column widths
+    ws['!cols'] = [
+      { wch: 6 },  // #
+      { wch: 20 }, // Batch No
+      { wch: 30 }, // Product
+      { wch: 15 }, // SKU
+      { wch: 20 }, // Purchase Entry
+      { wch: 12 }, // Rack No
+      { wch: 15 }, // Expiry Status
+      { wch: 15 }, // Inward Date
+      { wch: 12 }, // Available Qty
+      { wch: 18 }, // Quantity Purchased
+      { wch: 15 }, // Purchase Price
+      { wch: 15 }, // Expiry Date
+    ];
+
+    const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=stock_batches_${new Date().toISOString().split('T')[0]}.xlsx`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('exportStockBatches error:', err);
     res.status(500).json({ msg: err.message });
   }
 };
