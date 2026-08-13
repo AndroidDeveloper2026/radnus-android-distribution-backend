@@ -18,6 +18,49 @@ const numOrUndefined = (v) => {
   return Number.isNaN(n) ? undefined : n;
 };
 
+// Builds the $or clause for the Data Explorer's global search box.
+// StockBatch itself only stores batchNo/rackNo directly — product name/SKU,
+// purchase number, and supplier name all live on related collections — so we
+// resolve matching ids there first, then fold everything into one $or.
+const buildStockBatchSearchOr = async (search) => {
+  const q = (search || "").trim();
+  if (!q) return null;
+
+  const searchRegex = { $regex: q, $options: "i" };
+
+  const [matchingProducts, matchingEntriesByNumber, matchingSuppliers] = await Promise.all([
+    Product.find({ $or: [{ name: searchRegex }, { sku: searchRegex }] }).select("_id"),
+    PurchaseEntry.find({ purchaseNumber: searchRegex }).select("_id"),
+    Supplier.find({ name: searchRegex }).select("_id"),
+  ]);
+
+  let supplierEntryIds = [];
+  if (matchingSuppliers.length) {
+    const entriesForSuppliers = await PurchaseEntry.find({
+      supplier: { $in: matchingSuppliers.map((s) => s._id) },
+    }).select("_id");
+    supplierEntryIds = entriesForSuppliers.map((e) => e._id);
+  }
+
+  const purchaseEntryIds = [
+    ...matchingEntriesByNumber.map((e) => e._id),
+    ...supplierEntryIds,
+  ];
+
+  const orClauses = [
+    { batchNo: searchRegex },
+    { rackNo: searchRegex },
+  ];
+  if (matchingProducts.length) {
+    orClauses.push({ productId: { $in: matchingProducts.map((p) => p._id) } });
+  }
+  if (purchaseEntryIds.length) {
+    orClauses.push({ purchaseEntryId: { $in: purchaseEntryIds } });
+  }
+
+  return orClauses;
+};
+
 function getFinancialYear(date) {
   const d = date ? new Date(date) : new Date();
   const y = d.getFullYear();
@@ -840,15 +883,10 @@ exports.getStockBatches = async (req, res) => {
     }
 
     // Global Search
-    if (search && search.trim()) {
-      const searchRegex = { $regex: search.trim(), $options: 'i' };
-      query.$or = [
-        { batchNo: searchRegex },
-        { rackNo: searchRegex },
-      ];
+    const searchOr = await buildStockBatchSearchOr(search);
+    if (searchOr) {
+      query.$or = searchOr;
     }
-
-    // ─── Aggregation Pipeline ────────────────────────────────────────
     const pipeline = [
       { $match: query },
       {
@@ -1067,12 +1105,9 @@ exports.exportStockBatches = async (req, res) => {
       }
     }
 
-    if (search && search.trim()) {
-      const searchRegex = { $regex: search.trim(), $options: 'i' };
-      query.$or = [
-        { batchNo: searchRegex },
-        { rackNo: searchRegex },
-      ];
+    const searchOr = await buildStockBatchSearchOr(search);
+    if (searchOr) {
+      query.$or = searchOr;
     }
 
     // ─── Get Data ─────────────────────────────────────────────────────
