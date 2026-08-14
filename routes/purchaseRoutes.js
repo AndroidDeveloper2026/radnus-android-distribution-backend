@@ -1,4 +1,5 @@
 
+
 // routes/purchaseRoutes.js
 
 const express = require("express");
@@ -55,7 +56,6 @@ router.get("/:id", auth, getPurchaseEntryById);
 router.put("/:id", auth, updatePurchaseEntry);
 
 module.exports = router;
-
 
 //---------- 13.08.2026 -------------------
 // // routes/purchaseRoutes.js

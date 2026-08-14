@@ -1,4 +1,5 @@
 
+
 // controllers/purchaseController.js
 const mongoose = require("mongoose");
 
@@ -19,9 +20,6 @@ const numOrUndefined = (v) => {
 };
 
 // Builds the $or clause for the Data Explorer's global search box.
-// StockBatch itself only stores batchNo/rackNo directly — product name/SKU,
-// purchase number, and supplier name all live on related collections — so we
-// resolve matching ids there first, then fold everything into one $or.
 const buildStockBatchSearchOr = async (search) => {
   const q = (search || "").trim();
   if (!q) return null;
@@ -747,34 +745,7 @@ exports.getProductBatches = async (req, res) => {
   }
 };
 
-// ─── FIXED: Get available quantities for product batches ──────────────────────────
-
-// exports.getProductBatchAvailability = async (req, res) => {
-//   try {
-//     const { productId } = req.params;
-    
-//     if (!mongoose.Types.ObjectId.isValid(productId)) {
-//       return res.status(400).json({ msg: 'Invalid product ID' });
-//     }
-
-//     // ✅ FIX: Only return batches with available quantity > 0
-//     const batches = await StockBatch.find({ 
-//       productId: new mongoose.Types.ObjectId(productId),
-//       quantityAvailable: { $gt: 0 }
-//     })
-//     .sort({ inwardDate: 1 })
-//     .select('batchNo quantityAvailable purchasePrice mrp retailerPrice distributorPrice walkinPrice inwardDate');
-
-//     res.json(batches);
-//   } catch (err) {
-//     console.error('getProductBatchAvailability error:', err);
-//     res.status(500).json({ msg: err.message });
-//   }
-// };
-
-// controllers/purchaseController.js - Add this function at the end
-
-// ─── FIXED: Get available quantities for product batches ──────────────────────────
+// ─── Get available quantities for product batches ──────────────────────────
 
 exports.getProductBatchAvailability = async (req, res) => {
   try {
@@ -784,10 +755,9 @@ exports.getProductBatchAvailability = async (req, res) => {
       return res.status(400).json({ msg: 'Invalid product ID' });
     }
 
-    // ✅ IMPORTANT: Only return batches with quantityAvailable > 0
     const batches = await StockBatch.find({ 
       productId: new mongoose.Types.ObjectId(productId),
-      quantityAvailable: { $gt: 0 }  // ← This filters out zero stock
+      quantityAvailable: { $gt: 0 }
     })
     .sort({ inwardDate: 1 })
     .select('batchNo quantityAvailable purchasePrice mrp retailerPrice distributorPrice walkinPrice inwardDate');
@@ -801,9 +771,7 @@ exports.getProductBatchAvailability = async (req, res) => {
   }
 };
 
-// controllers/purchaseController.js - ADD THESE FUNCTIONS
-
-// ─── Get Stock Batches for Data Explorer ──────────────────────────────
+// ─── Get Stock Batches for Data Explorer ────────────────────────────────────
 
 exports.getStockBatches = async (req, res) => {
   try {
@@ -817,6 +785,8 @@ exports.getStockBatches = async (req, res) => {
       expiryStatus,
       inwardDateFrom,
       inwardDateTo,
+      paymentStatus,
+      paymentType,
       sortKey = 'batchNo',
       sortDirection = 'desc',
       page = 1,
@@ -837,15 +807,26 @@ exports.getStockBatches = async (req, res) => {
     }
 
     // Purchase Entry filter
-    if (purchaseEntry && purchaseEntry !== 'all' && mongoose.Types.ObjectId.isValid(purchaseEntry)) {
-      query.purchaseEntryId = new mongoose.Types.ObjectId(purchaseEntry);
+    if (purchaseEntry && purchaseEntry !== 'all') {
+      if (purchaseEntry.startsWith('PUR')) {
+        const entry = await PurchaseEntry.findOne({ purchaseNumber: purchaseEntry }).select('_id');
+        if (entry) {
+          query.purchaseEntryId = entry._id;
+        }
+      } else if (mongoose.Types.ObjectId.isValid(purchaseEntry)) {
+        query.purchaseEntryId = new mongoose.Types.ObjectId(purchaseEntry);
+      }
     }
 
-    // Supplier filter — StockBatch has no direct supplier field, so resolve
-    // via the PurchaseEntry docs that belong to this supplier first.
-    if (supplier && supplier !== 'all' && mongoose.Types.ObjectId.isValid(supplier) && !query.purchaseEntryId) {
-      const supplierEntries = await PurchaseEntry.find({ supplier: new mongoose.Types.ObjectId(supplier) }).select('_id');
-      query.purchaseEntryId = { $in: supplierEntries.map((e) => e._id) };
+    // Supplier filter
+    if (supplier && supplier !== 'all' && mongoose.Types.ObjectId.isValid(supplier)) {
+      const supplierEntries = await PurchaseEntry.find({ 
+        supplier: new mongoose.Types.ObjectId(supplier) 
+      }).select('_id');
+      const entryIds = supplierEntries.map(e => e._id);
+      if (entryIds.length > 0) {
+        query.purchaseEntryId = { $in: entryIds };
+      }
     }
 
     // Rack No filter
@@ -882,11 +863,47 @@ exports.getStockBatches = async (req, res) => {
       }
     }
 
+    // ─── Payment Status Filter ──────────────────────────────────────
+    if (paymentStatus && paymentStatus !== 'all') {
+      const entriesWithStatus = await PurchaseEntry.find({ 
+        paymentStatus: paymentStatus 
+      }).select('_id');
+      const entryIds = entriesWithStatus.map(e => e._id);
+      if (entryIds.length > 0) {
+        if (query.purchaseEntryId) {
+          // If we already have a purchaseEntryId filter, combine with $in
+          query.purchaseEntryId = { $in: entryIds };
+        } else {
+          query.purchaseEntryId = { $in: entryIds };
+        }
+      }
+    }
+
+    // ─── Payment Type Filter ────────────────────────────────────────
+    if (paymentType && paymentType !== 'all') {
+      const entriesWithType = await PurchaseEntry.find({ 
+        paymentType: paymentType 
+      }).select('_id');
+      const entryIds = entriesWithType.map(e => e._id);
+      if (entryIds.length > 0) {
+        if (query.purchaseEntryId) {
+          // If we already have a purchaseEntryId filter, combine with $in
+          const existingIn = query.purchaseEntryId.$in || [query.purchaseEntryId];
+          const combinedIds = existingIn.filter(id => entryIds.includes(id.toString()));
+          query.purchaseEntryId = { $in: combinedIds };
+        } else {
+          query.purchaseEntryId = { $in: entryIds };
+        }
+      }
+    }
+
     // Global Search
     const searchOr = await buildStockBatchSearchOr(search);
     if (searchOr) {
       query.$or = searchOr;
     }
+
+    // ─── Aggregation Pipeline ────────────────────────────────────────
     const pipeline = [
       { $match: query },
       {
@@ -923,14 +940,42 @@ exports.getStockBatches = async (req, res) => {
           productName: { $ifNull: ['$product.name', '—'] },
           productImage: '$product.image',
           sku: { $ifNull: ['$product.sku', '—'] },
+          
+          // ─── Purchase Entry Fields ──────────────────────────────
           purchaseEntry: { $ifNull: ['$purchase.purchaseNumber', '—'] },
+          invoiceNumber: { $ifNull: ['$purchase.invoiceNumber', '—'] },
+          invoiceDate: { $ifNull: ['$purchase.invoiceDate', null] },
+          paymentType: { $ifNull: ['$purchase.paymentType', '—'] },
+          paymentStatus: { $ifNull: ['$purchase.paymentStatus', 'unpaid'] },
+          paidAmount: { $ifNull: ['$purchase.paidAmount', 0] },
+          dueAmount: { $ifNull: ['$purchase.dueAmount', 0] },
+          createdBy: { $ifNull: ['$purchase.createdBy', '—'] },
+          createdAt: { $ifNull: ['$purchase.createdAt', null] },
+          updatedAt: { $ifNull: ['$purchase.updatedAt', null] },
+          remarks: { $ifNull: ['$purchase.remarks', ''] },
+          
+          // ─── Supplier Fields ────────────────────────────────────
           supplierName: { $ifNull: ['$supplierDoc.name', '—'] },
+          supplierId: '$purchase.supplier',
+          
+          // ─── Product Quantity Fields ────────────────────────────
+          quantityPurchased: 1,
+          quantityAvailable: 1,
+          
+          // ─── Pricing Fields ─────────────────────────────────────
+          purchasePrice: 1,
+          mrp: 1,
+          itemCost: 1,
+          distributorPrice: 1,
+          retailerPrice: 1,
+          walkinPrice: 1,
+          
+          // ─── Stock Fields ──────────────────────────────────────
           rackNo: { $ifNull: ['$rackNo', '—'] },
           expiryDate: 1,
           inwardDate: 1,
-          quantityAvailable: 1,
-          quantityPurchased: 1,
-          purchasePrice: 1,
+          
+          // ─── Computed Fields ────────────────────────────────────
           expiryStatus: {
             $cond: [
               { $and: [{ $ne: ['$expiryDate', null] }, { $lt: ['$expiryDate', new Date()] }] },
@@ -953,8 +998,6 @@ exports.getStockBatches = async (req, res) => {
 
     // ─── Sorting ──────────────────────────────────────────────────────
     const sortDirectionValue = sortDirection === 'asc' ? 1 : -1;
-    const sortObj = {};
-    
     const sortKeyMap = {
       batchNo: 'batchNo',
       productName: 'productName',
@@ -965,11 +1008,14 @@ exports.getStockBatches = async (req, res) => {
       purchasePrice: 'purchasePrice',
       purchaseEntry: 'purchaseEntry',
       supplierName: 'supplierName',
+      invoiceNumber: 'invoiceNumber',
+      invoiceDate: 'invoiceDate',
+      paymentStatus: 'paymentStatus',
+      dueAmount: 'dueAmount',
     };
     
     const actualSortKey = sortKeyMap[sortKey] || 'batchNo';
-    sortObj[actualSortKey] = sortDirectionValue;
-    pipeline.push({ $sort: sortObj });
+    pipeline.push({ $sort: { [actualSortKey]: sortDirectionValue } });
 
     // ─── Pagination ──────────────────────────────────────────────────
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -1000,7 +1046,7 @@ exports.getStockBatches = async (req, res) => {
   }
 };
 
-// ─── Get Filter Options for Data Explorer ──────────────────────────────
+// ─── Get Filter Options for Data Explorer ─────────────────────────────────
 
 exports.getFilterOptions = async (req, res) => {
   try {
@@ -1023,12 +1069,18 @@ exports.getFilterOptions = async (req, res) => {
       .select('_id name')
       .sort({ name: 1 });
 
+    // ─── Get payment statuses and types ──────────────────────────────
+    const paymentStatuses = await PurchaseEntry.distinct('paymentStatus');
+    const paymentTypes = await PurchaseEntry.distinct('paymentType');
+
     res.json({
       products,
       batches: batches.filter(b => b && b !== ''),
       purchaseEntries: purchaseEntries.filter(p => p && p !== ''),
       racks: racks.filter(r => r && r !== ''),
       suppliers,
+      paymentStatuses: paymentStatuses.filter(s => s && s !== ''),
+      paymentTypes: paymentTypes.filter(t => t && t !== ''),
     });
   } catch (err) {
     console.error('getFilterOptions error:', err);
@@ -1036,7 +1088,7 @@ exports.getFilterOptions = async (req, res) => {
   }
 };
 
-// ─── Export Stock Batches to Excel ──────────────────────────────────────
+// ─── Export Stock Batches to Excel ──────────────────────────────────────────
 
 exports.exportStockBatches = async (req, res) => {
   try {
@@ -1050,6 +1102,8 @@ exports.exportStockBatches = async (req, res) => {
       expiryStatus,
       inwardDateFrom,
       inwardDateTo,
+      paymentStatus,
+      paymentType,
       sortKey = 'batchNo',
       sortDirection = 'desc',
     } = req.query;
@@ -1057,27 +1111,45 @@ exports.exportStockBatches = async (req, res) => {
     // ─── Build Filter Query ──────────────────────────────────────────
     const query = {};
 
+    // Product filter
     if (product && product !== 'all' && mongoose.Types.ObjectId.isValid(product)) {
       query.productId = new mongoose.Types.ObjectId(product);
     }
 
+    // Batch No filter
     if (batchNo && batchNo !== 'all') {
       query.batchNo = { $regex: batchNo, $options: 'i' };
     }
 
-    if (purchaseEntry && purchaseEntry !== 'all' && mongoose.Types.ObjectId.isValid(purchaseEntry)) {
-      query.purchaseEntryId = new mongoose.Types.ObjectId(purchaseEntry);
+    // Purchase Entry filter
+    if (purchaseEntry && purchaseEntry !== 'all') {
+      if (purchaseEntry.startsWith('PUR')) {
+        const entry = await PurchaseEntry.findOne({ purchaseNumber: purchaseEntry }).select('_id');
+        if (entry) {
+          query.purchaseEntryId = entry._id;
+        }
+      } else if (mongoose.Types.ObjectId.isValid(purchaseEntry)) {
+        query.purchaseEntryId = new mongoose.Types.ObjectId(purchaseEntry);
+      }
     }
 
-    if (supplier && supplier !== 'all' && mongoose.Types.ObjectId.isValid(supplier) && !query.purchaseEntryId) {
-      const supplierEntries = await PurchaseEntry.find({ supplier: new mongoose.Types.ObjectId(supplier) }).select('_id');
-      query.purchaseEntryId = { $in: supplierEntries.map((e) => e._id) };
+    // Supplier filter
+    if (supplier && supplier !== 'all' && mongoose.Types.ObjectId.isValid(supplier)) {
+      const supplierEntries = await PurchaseEntry.find({ 
+        supplier: new mongoose.Types.ObjectId(supplier) 
+      }).select('_id');
+      const entryIds = supplierEntries.map(e => e._id);
+      if (entryIds.length > 0) {
+        query.purchaseEntryId = { $in: entryIds };
+      }
     }
 
+    // Rack No filter
     if (rackNo && rackNo !== 'all') {
       query.rackNo = { $regex: rackNo, $options: 'i' };
     }
 
+    // Inward Date Range
     if (inwardDateFrom) {
       query.inwardDate = { $gte: new Date(inwardDateFrom) };
     }
@@ -1090,6 +1162,7 @@ exports.exportStockBatches = async (req, res) => {
       };
     }
 
+    // Expiry Status
     if (expiryStatus && expiryStatus !== 'all') {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -1105,6 +1178,29 @@ exports.exportStockBatches = async (req, res) => {
       }
     }
 
+    // ─── Payment Status Filter ──────────────────────────────────────
+    if (paymentStatus && paymentStatus !== 'all') {
+      const entriesWithStatus = await PurchaseEntry.find({ 
+        paymentStatus: paymentStatus 
+      }).select('_id');
+      const entryIds = entriesWithStatus.map(e => e._id);
+      if (entryIds.length > 0) {
+        query.purchaseEntryId = { $in: entryIds };
+      }
+    }
+
+    // ─── Payment Type Filter ────────────────────────────────────────
+    if (paymentType && paymentType !== 'all') {
+      const entriesWithType = await PurchaseEntry.find({ 
+        paymentType: paymentType 
+      }).select('_id');
+      const entryIds = entriesWithType.map(e => e._id);
+      if (entryIds.length > 0) {
+        query.purchaseEntryId = { $in: entryIds };
+      }
+    }
+
+    // Global Search
     const searchOr = await buildStockBatchSearchOr(search);
     if (searchOr) {
       query.$or = searchOr;
@@ -1146,6 +1242,11 @@ exports.exportStockBatches = async (req, res) => {
           productName: { $ifNull: ['$product.name', '—'] },
           sku: { $ifNull: ['$product.sku', '—'] },
           purchaseEntry: { $ifNull: ['$purchase.purchaseNumber', '—'] },
+          invoiceNumber: { $ifNull: ['$purchase.invoiceNumber', '—'] },
+          invoiceDate: '$purchase.invoiceDate',
+          paymentType: { $ifNull: ['$purchase.paymentType', '—'] },
+          paymentStatus: { $ifNull: ['$purchase.paymentStatus', 'unpaid'] },
+          dueAmount: { $ifNull: ['$purchase.dueAmount', 0] },
           supplierName: { $ifNull: ['$supplierDoc.name', '—'] },
           rackNo: { $ifNull: ['$rackNo', '—'] },
           expiryDate: 1,
@@ -1153,6 +1254,13 @@ exports.exportStockBatches = async (req, res) => {
           quantityAvailable: 1,
           quantityPurchased: 1,
           purchasePrice: 1,
+          mrp: 1,
+          itemCost: 1,
+          distributorPrice: 1,
+          retailerPrice: 1,
+          walkinPrice: 1,
+          createdBy: { $ifNull: ['$purchase.createdBy', '—'] },
+          createdAt: '$purchase.createdAt',
           expiryStatus: {
             $cond: [
               { $and: [{ $ne: ['$expiryDate', null] }, { $lt: ['$expiryDate', new Date()] }] },
@@ -1182,14 +1290,25 @@ exports.exportStockBatches = async (req, res) => {
       'Product': b.productName || '—',
       'SKU': b.sku || '—',
       'Purchase Entry': b.purchaseEntry || '—',
+      'Invoice No': b.invoiceNumber || '—',
+      'Invoice Date': b.invoiceDate ? new Date(b.invoiceDate).toLocaleDateString('en-GB') : '—',
+      'Payment Status': b.paymentStatus || '—',
+      'Payment Type': b.paymentType || '—',
+      'Due Amount': b.dueAmount ? Number(b.dueAmount).toFixed(2) : '0.00',
       'Supplier': b.supplierName || '—',
       'Rack No': b.rackNo || '—',
       'Expiry Status': b.expiryStatus || '—',
       'Inward Date': b.inwardDate ? new Date(b.inwardDate).toLocaleDateString('en-GB') : '—',
       'Available Qty': b.quantityAvailable || 0,
-      'Quantity Purchased': b.quantityPurchased || 0,
+      'Purchased Qty': b.quantityPurchased || 0,
       'Purchase Price': b.purchasePrice ? Number(b.purchasePrice).toFixed(2) : '—',
-      'Expiry Date': b.expiryDate ? new Date(b.expiryDate).toLocaleDateString('en-GB') : '—',
+      'MRP': b.mrp ? Number(b.mrp).toFixed(2) : '—',
+      'Item Cost': b.itemCost ? Number(b.itemCost).toFixed(2) : '—',
+      'Distributor Price': b.distributorPrice ? Number(b.distributorPrice).toFixed(2) : '—',
+      'Retailer Price': b.retailerPrice ? Number(b.retailerPrice).toFixed(2) : '—',
+      'Walk-in Price': b.walkinPrice ? Number(b.walkinPrice).toFixed(2) : '—',
+      'Created By': b.createdBy || '—',
+      'Created At': b.createdAt ? new Date(b.createdAt).toLocaleString('en-GB') : '—',
     }));
 
     const ws = XLSX.utils.json_to_sheet(data);
@@ -1198,19 +1317,30 @@ exports.exportStockBatches = async (req, res) => {
 
     // Set column widths
     ws['!cols'] = [
-      { wch: 6 },  // #
-      { wch: 20 }, // Batch No
-      { wch: 30 }, // Product
-      { wch: 15 }, // SKU
-      { wch: 20 }, // Purchase Entry
-      { wch: 20 }, // Supplier
-      { wch: 12 }, // Rack No
-      { wch: 15 }, // Expiry Status
-      { wch: 15 }, // Inward Date
-      { wch: 12 }, // Available Qty
-      { wch: 18 }, // Quantity Purchased
-      { wch: 15 }, // Purchase Price
-      { wch: 15 }, // Expiry Date
+      { wch: 6 },   // #
+      { wch: 20 },  // Batch No
+      { wch: 30 },  // Product
+      { wch: 15 },  // SKU
+      { wch: 20 },  // Purchase Entry
+      { wch: 20 },  // Invoice No
+      { wch: 15 },  // Invoice Date
+      { wch: 15 },  // Payment Status
+      { wch: 15 },  // Payment Type
+      { wch: 15 },  // Due Amount
+      { wch: 20 },  // Supplier
+      { wch: 12 },  // Rack No
+      { wch: 15 },  // Expiry Status
+      { wch: 15 },  // Inward Date
+      { wch: 12 },  // Available Qty
+      { wch: 15 },  // Purchased Qty
+      { wch: 15 },  // Purchase Price
+      { wch: 15 },  // MRP
+      { wch: 15 },  // Item Cost
+      { wch: 18 },  // Distributor Price
+      { wch: 18 },  // Retailer Price
+      { wch: 18 },  // Walk-in Price
+      { wch: 15 },  // Created By
+      { wch: 20 },  // Created At
     ];
 
     const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
@@ -1223,8 +1353,6 @@ exports.exportStockBatches = async (req, res) => {
     res.status(500).json({ msg: err.message });
   }
 };
-
-
 
 //---------- 13.08.2026 ----------------------
 // // controllers/purchaseController.js
