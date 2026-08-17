@@ -22,11 +22,14 @@ function isFromPreviousDay(date) {
 // ─── Route rebuild helper ──────────────────────────────────────────────
 async function rebuildSessionRoute(sessionId) {
   try {
+    console.log(`🔄 Rebuilding route for session ${sessionId}`);
+    
     const locations = await Location.find({ sessionId })
       .sort({ timestamp: 1 })
       .lean();
 
     if (locations.length === 0) {
+      console.log(`⚠️ No locations found for session ${sessionId}`);
       return null;
     }
 
@@ -56,10 +59,10 @@ async function rebuildSessionRoute(sessionId) {
       { new: true }
     );
 
-    console.log(`🔄 Route rebuilt: ${locations.length} points, ${totalDistance.toFixed(4)}km`);
+    console.log(`✅ Route rebuilt: ${locations.length} points, ${totalDistance.toFixed(4)}km`);
     return updatedSession;
   } catch (err) {
-    console.error(`❌ Failed to rebuild route:`, err.message);
+    console.error(`❌ Failed to rebuild route for session ${sessionId}:`, err.message);
     return null;
   }
 }
@@ -67,6 +70,16 @@ async function rebuildSessionRoute(sessionId) {
 // ─── Auto-end stale sessions ────────────────────────────────────────────
 async function autoEndSessionIfStale(session) {
   if (!session || session.status !== 'ACTIVE') return session;
+  
+  // ✅ FIX: Only auto-end if more than 24 hours old
+  const twentyFourHoursAgo = new Date();
+  twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+  
+  if (session.startTime > twentyFourHoursAgo) {
+    console.log(`✅ Session ${session._id} is recent, keeping active`);
+    return session;
+  }
+  
   if (!isFromPreviousDay(session.startTime)) return session;
 
   return runExclusive(session._id, async () => {
@@ -159,7 +172,7 @@ router.get('/today/:userId', async (req, res) => {
     }
 
     // ✅ Rebuild route before returning
-    if (session.status === 'ACTIVE') {
+    if (session.status === 'ACTIVE' || session.status === 'AUTO_ENDED') {
       const rebuilt = await rebuildSessionRoute(session._id);
       if (rebuilt) {
         return res.json(rebuilt);
@@ -344,6 +357,33 @@ router.post('/end', async (req, res) => {
   }
 });
 
+// ─── FORCE REBUILD ENDPOINT ─────────────────────────────────────────────
+router.post('/rebuild/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    console.log(`🔄 Manually rebuilding route for ${sessionId}`);
+    
+    const rebuilt = await rebuildSessionRoute(sessionId);
+    
+    if (rebuilt) {
+      res.json({
+        success: true,
+        pointCount: rebuilt.pointCount,
+        totalDistanceKm: rebuilt.totalDistanceKm,
+        routeLength: rebuilt.route?.length || 0,
+        session: rebuilt
+      });
+    } else {
+      res.json({
+        success: false,
+        message: 'No locations found for this session'
+      });
+    }
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // ─── GET SESSION BY ID ──────────────────────────────────────────────────
 router.get('/:sessionId', async (req, res) => {
   try {
@@ -356,14 +396,26 @@ router.get('/:sessionId', async (req, res) => {
       return res.status(404).json({ message: 'Session not found' });
     }
 
-    // ✅ Auto-end if stale
-    session = await autoEndSessionIfStale(session);
-
-    // ✅ Always rebuild route for ACTIVE sessions
-    if (session.status === 'ACTIVE') {
+    // ✅ ALWAYS rebuild route for ACTIVE sessions
+    if (session.status === 'ACTIVE' || session.status === 'AUTO_ENDED') {
+      console.log(`🔄 Rebuilding route for session ${sessionId} (status: ${session.status})`);
       const rebuilt = await rebuildSessionRoute(sessionId);
       if (rebuilt) {
         session = rebuilt;
+        console.log(`✅ Route rebuilt: ${session.route?.length || 0} points, ${session.totalDistanceKm}km`);
+      } else {
+        console.log(`⚠️ No locations found for session ${sessionId}`);
+      }
+    }
+
+    // ✅ Auto-end if stale (but only if > 24 hours old)
+    if (session.status === 'ACTIVE') {
+      const twentyFourHoursAgo = new Date();
+      twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+      
+      if (session.startTime < twentyFourHoursAgo) {
+        console.log(`⏰ Session ${sessionId} is > 24 hours old, auto-ending`);
+        session = await autoEndSessionIfStale(session);
       }
     }
 
@@ -391,8 +443,8 @@ router.get('/:sessionId', async (req, res) => {
 
 module.exports = router;
 
-//------------ 08.08.2026 --------------------
-// // sessionRoutes.js - COMPLETE PRODUCTION VERSION
+//--------------- 17.08.2026 ------------------------------
+// // sessionRoutes.js - COMPLETE FIXED VERSION
 
 // const express = require('express');
 // const router = express.Router();
@@ -401,13 +453,8 @@ module.exports = router;
 // const calculateDistance = require('../utils/distance');
 // const { runExclusive } = require('../utils/sessionLock');
 
-// // ✅ NOTE: Add your auth middleware here, e.g.:
-// // const authMiddleware = require('../middleware/auth');
-// // router.use(authMiddleware);
+// const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
-// const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // run cleanup every hour
-
-// // ─── DAY BOUNDARY HELPERS ─────────────────────────────────────────────────
 // function getStartOfToday() {
 //   const d = new Date();
 //   d.setHours(0, 0, 0, 0);
@@ -418,62 +465,78 @@ module.exports = router;
 //   return new Date(date) < getStartOfToday();
 // }
 
-// // ─── AUTO-END A SINGLE STALE SESSION ─────────────────────────────────────
-// // A session is "stale" once its startTime falls before today's midnight —
-// // i.e. it belongs to a previous calendar day.
+// // ─── Route rebuild helper ──────────────────────────────────────────────
+// async function rebuildSessionRoute(sessionId) {
+//   try {
+//     const locations = await Location.find({ sessionId })
+//       .sort({ timestamp: 1 })
+//       .lean();
+
+//     if (locations.length === 0) {
+//       return null;
+//     }
+
+//     let totalDistance = 0;
+//     for (let i = 1; i < locations.length; i++) {
+//       const prev = locations[i - 1];
+//       const curr = locations[i];
+//       totalDistance += calculateDistance(
+//         prev.latitude, prev.longitude,
+//         curr.latitude, curr.longitude
+//       );
+//     }
+
+//     const route = locations.map(l => ({
+//       latitude: l.latitude,
+//       longitude: l.longitude,
+//       timestamp: l.timestamp,
+//     }));
+
+//     const updatedSession = await Session.findByIdAndUpdate(
+//       sessionId,
+//       {
+//         route: route,
+//         totalDistanceKm: parseFloat(totalDistance.toFixed(4)),
+//         pointCount: locations.length,
+//       },
+//       { new: true }
+//     );
+
+//     console.log(`🔄 Route rebuilt: ${locations.length} points, ${totalDistance.toFixed(4)}km`);
+//     return updatedSession;
+//   } catch (err) {
+//     console.error(`❌ Failed to rebuild route:`, err.message);
+//     return null;
+//   }
+// }
+
+// // ─── Auto-end stale sessions ────────────────────────────────────────────
 // async function autoEndSessionIfStale(session) {
 //   if (!session || session.status !== 'ACTIVE') return session;
 //   if (!isFromPreviousDay(session.startTime)) return session;
 
 //   return runExclusive(session._id, async () => {
-//     // Re-fetch inside the lock in case another request already ended it
-//     // while we were waiting our turn in the queue.
 //     const fresh = await Session.findById(session._id);
 //     if (!fresh || fresh.status !== 'ACTIVE') return fresh || session;
 
-//     let totalDistanceKm = fresh.totalDistanceKm || 0;
-//     let pointCount = fresh.pointCount || fresh.route.length;
-//     try {
-//       const locations = await Location.find({ sessionId: fresh._id })
-//         .sort({ timestamp: 1 })
-//         .lean();
+//     // ✅ Rebuild route before ending
+//     const rebuilt = await rebuildSessionRoute(session._id);
+//     const finalSession = rebuilt || fresh;
 
-//       let recalculated = 0;
-//       for (let i = 1; i < locations.length; i++) {
-//         recalculated += calculateDistance(
-//           locations[i - 1].latitude,
-//           locations[i - 1].longitude,
-//           locations[i].latitude,
-//           locations[i].longitude,
-//         );
-//       }
-//       if (locations.length > 1) {
-//         totalDistanceKm = recalculated;
-//       }
-//       if (locations.length > 0) {
-//         pointCount = locations.length;
-//       }
-//     } catch (distErr) {
-//       console.log('⚠️ Could not recalculate distance during auto-end:', distErr.message);
-//     }
+//     finalSession.status = 'AUTO_ENDED';
+//     finalSession.endTime = finalSession.endTime || new Date();
+//     await finalSession.save();
 
-//     fresh.status = 'AUTO_ENDED';
-//     fresh.endTime = fresh.endTime || new Date();
-//     fresh.totalDistanceKm = parseFloat(totalDistanceKm.toFixed(4));
-//     fresh.pointCount = pointCount;
-//     await fresh.save();
-
-//     console.log(`🧹 Auto-ended session ${fresh._id} — belongs to a previous day`);
-//     return fresh;
+//     console.log(`🧹 Auto-ended session ${finalSession._id}`);
+//     return finalSession;
 //   });
 // }
 
-// // ─── HOURLY SWEEP (safety net) ────────────────────────────────────────────
 // async function cleanupStaleSessions() {
 //   try {
 //     const staleSessions = await Session.find({
 //       status: 'ACTIVE',
-//       startTime: { $lt: getStartOfToday() },
+//       startTime: { $lt: getStartOfToday() }
 //     });
 
 //     for (const session of staleSessions) {
@@ -484,30 +547,22 @@ module.exports = router;
 //   }
 // }
 
-// // Run cleanup on startup
 // cleanupStaleSessions();
 // setInterval(cleanupStaleSessions, CLEANUP_INTERVAL_MS);
 
-// // ─── GET ALL SESSIONS (paginated) ────────────────────────────────────────────
+// // ─── GET ALL SESSIONS ────────────────────────────────────────────────────
 // router.get('/', async (req, res) => {
 //   try {
-//     console.log('📥 GET /api/session called');
-
 //     const page = parseInt(req.query.page, 10) || 1;
 //     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
 //     const skip = (page - 1) * limit;
-
 //     const { userId, status } = req.query;
 //     const filter = {};
 //     if (userId) filter.userId = userId;
 //     if (status) filter.status = status;
 
 //     const [sessions, total] = await Promise.all([
-//       Session.find(filter)
-//         .sort({ createdAt: -1 })
-//         .skip(skip)
-//         .limit(limit)
-//         .select('-route'),
+//       Session.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).select('-route'),
 //       Session.countDocuments(filter),
 //     ]);
 
@@ -527,11 +582,10 @@ module.exports = router;
 //   }
 // });
 
-// // ─── CHECK TODAY'S SESSION ───────────────────────────────────────────────────
+// // ─── CHECK TODAY'S SESSION ──────────────────────────────────────────────
 // router.get('/today/:userId', async (req, res) => {
 //   try {
 //     const { userId } = req.params;
-
 //     if (!userId) {
 //       return res.status(400).json({ message: 'userId is required' });
 //     }
@@ -550,6 +604,14 @@ module.exports = router;
 //       return res.status(404).json({ message: 'No active session today' });
 //     }
 
+//     // ✅ Rebuild route before returning
+//     if (session.status === 'ACTIVE') {
+//       const rebuilt = await rebuildSessionRoute(session._id);
+//       if (rebuilt) {
+//         return res.json(rebuilt);
+//       }
+//     }
+
 //     res.json(session);
 //   } catch (err) {
 //     console.log('❌ Error in /today/:userId:', err);
@@ -557,34 +619,34 @@ module.exports = router;
 //   }
 // });
 
-// // ─── ORPHANED SESSION CHECK (for app-start recovery) ─────────────────────────
+// // ─── ORPHANED SESSION CHECK ─────────────────────────────────────────────
 // router.get('/orphaned/:userId', async (req, res) => {
 //   try {
 //     const { userId } = req.params;
-
 //     if (!userId) {
 //       return res.status(400).json({ message: 'userId is required' });
 //     }
 
-//     // Same day-boundary rule as everywhere else
 //     const orphaned = await Session.findOne({
 //       userId,
 //       status: 'ACTIVE',
-//       startTime: { $lt: getStartOfToday() },
+//       startTime: { $lt: getStartOfToday() }
 //     });
 
 //     if (!orphaned) {
 //       return res.status(404).json({ message: 'No orphaned session found' });
 //     }
 
-//     res.json(orphaned);
+//     // ✅ Rebuild route before returning
+//     const rebuilt = await rebuildSessionRoute(orphaned._id);
+//     res.json(rebuilt || orphaned);
 //   } catch (err) {
 //     console.log('❌ Error checking orphaned session:', err.message);
 //     res.status(500).json({ message: 'Error checking orphaned session', error: err.message });
 //   }
 // });
 
-// // ─── START SESSION ───────────────────────────────────────────────────────────
+// // ─── START SESSION ──────────────────────────────────────────────────────
 // router.post('/start', async (req, res) => {
 //   try {
 //     const { userId, latitude, longitude } = req.body;
@@ -601,11 +663,8 @@ module.exports = router;
 
 //     const lat = parseFloat(latitude);
 //     const lng = parseFloat(longitude);
-
 //     if (isNaN(lat) || isNaN(lng)) {
-//       return res.status(400).json({
-//         message: 'latitude and longitude must be valid numbers',
-//       });
+//       return res.status(400).json({ message: 'latitude and longitude must be valid numbers' });
 //     }
 
 //     const startOfDay = getStartOfToday();
@@ -635,7 +694,21 @@ module.exports = router;
 //     });
 
 //     const savedSession = await session.save();
-//     console.log(`✅ Session created - sessionId: ${savedSession._id}, startLocation LOCKED at (${lat}, ${lng})`);
+//     console.log(`✅ Session created - sessionId: ${savedSession._id}`);
+
+//     // ✅ Save start point to Location collection
+//     try {
+//       await Location.create({
+//         userId,
+//         sessionId: savedSession._id,
+//         latitude: lat,
+//         longitude: lng,
+//         timestamp: savedSession.startTime,
+//       });
+//       console.log(`✅ Start point saved to Location for session ${savedSession._id}`);
+//     } catch (locErr) {
+//       console.error('⚠️ Could not save start point to Location:', locErr.message);
+//     }
 
 //     res.status(201).json(savedSession);
 //   } catch (err) {
@@ -648,11 +721,10 @@ module.exports = router;
 //   }
 // });
 
-// // ─── END SESSION ─────────────────────────────────────────────────────────────
+// // ─── END SESSION ────────────────────────────────────────────────────────
 // router.post('/end', async (req, res) => {
 //   try {
 //     const { sessionId, finalLocation } = req.body;
-
 //     if (!sessionId) {
 //       return res.status(400).json({ message: 'Session ID required' });
 //     }
@@ -660,8 +732,7 @@ module.exports = router;
 //     console.log(`📤 Ending session: ${sessionId}`);
 
 //     const session = await runExclusive(sessionId, async () => {
-//       // ✅ If finalLocation provided, add it as the last point BEFORE
-//       //    recalculating, so it's included in the distance/point totals.
+//       // ✅ Save final location if provided
 //       if (finalLocation && finalLocation.latitude && finalLocation.longitude) {
 //         try {
 //           const existing = await Session.findById(sessionId).select('userId').lean();
@@ -673,15 +744,6 @@ module.exports = router;
 //               longitude: finalLocation.longitude,
 //               timestamp: new Date(),
 //             });
-//             await Session.findByIdAndUpdate(sessionId, {
-//               $push: {
-//                 route: {
-//                   latitude: finalLocation.latitude,
-//                   longitude: finalLocation.longitude,
-//                   timestamp: new Date(),
-//                 },
-//               },
-//             });
 //             console.log('✅ Final location saved');
 //           }
 //         } catch (locErr) {
@@ -689,49 +751,30 @@ module.exports = router;
 //         }
 //       }
 
-//       // ✅ Calculate totalDistanceKm + pointCount from Location records —
-//       //    these are the source of truth (each is written independently via
-//       //    Location.create and never touched by concurrent writes the way
-//       //    the embedded route array historically was).
-//       let totalDistanceKm = 0;
-//       let pointCount = 0;
-//       try {
-//         const locations = await Location.find({ sessionId })
-//           .sort({ timestamp: 1 })
-//           .lean();
-
-//         pointCount = locations.length;
-//         console.log(`📍 Found ${locations.length} location records for session ${sessionId}`);
-
-//         for (let i = 1; i < locations.length; i++) {
-//           const prev = locations[i - 1];
-//           const curr = locations[i];
-//           const dist = calculateDistance(
-//             prev.latitude,
-//             prev.longitude,
-//             curr.latitude,
-//             curr.longitude,
-//           );
-//           totalDistanceKm += dist;
-//         }
-
-//         console.log(`📏 Total distance recalculated: ${totalDistanceKm.toFixed(4)} km`);
-//       } catch (distErr) {
-//         console.error('⚠️ Could not calculate distance:', distErr.message);
+//       // ✅ Rebuild route from Location collection
+//       const rebuilt = await rebuildSessionRoute(sessionId);
+//       if (rebuilt) {
+//         // Update status to ENDED
+//         const updated = await Session.findByIdAndUpdate(
+//           sessionId,
+//           {
+//             status: 'ENDED',
+//             endTime: new Date(),
+//           },
+//           { new: true }
+//         );
+//         return updated;
 //       }
 
-//       // ✅ Update session with recalculated distance + point count
+//       // Fallback if rebuild fails
 //       const updated = await Session.findByIdAndUpdate(
 //         sessionId,
 //         {
 //           status: 'ENDED',
 //           endTime: new Date(),
-//           totalDistanceKm: parseFloat(totalDistanceKm.toFixed(4)),
-//           ...(pointCount > 0 ? { pointCount } : {}),
 //         },
-//         { new: true },
+//         { new: true }
 //       );
-
 //       return updated;
 //     });
 
@@ -740,7 +783,6 @@ module.exports = router;
 //     }
 
 //     console.log(`✅ Session ended - ${sessionId}, Distance: ${session.totalDistanceKm}km, Points: ${session.pointCount}`);
-
 //     res.json(session);
 //   } catch (err) {
 //     console.error('❌ Error ending session:', err.message);
@@ -748,91 +790,14 @@ module.exports = router;
 //   }
 // });
 
-// // ─── MANUAL CLEANUP TRIGGER (for admin / ops use) ────────────────────────────
-// router.post('/cleanup', async (req, res) => {
-//   try {
-//     await cleanupStaleSessions();
-
-//     const incompleteResult = await Session.updateMany(
-//       {
-//         status: 'ACTIVE',
-//         startTime: { $lt: getStartOfToday() },
-//         $or: [{ route: { $size: 0 } }, { route: { $exists: false } }],
-//       },
-//       { status: 'ENDED', endTime: new Date() },
-//     );
-
-//     res.json({
-//       success: true,
-//       message: 'Cleanup completed',
-//       incompleteSessionsClosed: incompleteResult.modifiedCount || 0,
-//     });
-//   } catch (err) {
-//     console.log('❌ Error running manual cleanup:', err.message);
-//     res.status(500).json({ message: 'Error running cleanup', error: err.message });
-//   }
-// });
-
-// // ─── RECALCULATE DISTANCE FOR A SESSION ──────────────────────────────────────
-// router.post('/recalculate/:sessionId', async (req, res) => {
-//   try {
-//     const { sessionId } = req.params;
-
-//     const locations = await Location.find({ sessionId })
-//       .sort({ timestamp: 1 })
-//       .lean();
-
-//     if (locations.length < 2) {
-//       return res.json({ 
-//         success: true, 
-//         message: 'Not enough points to calculate distance',
-//         distance: 0,
-//         pointCount: locations.length
-//       });
-//     }
-
-//     let totalDistance = 0;
-//     for (let i = 1; i < locations.length; i++) {
-//       const prev = locations[i - 1];
-//       const curr = locations[i];
-//       const dist = calculateDistance(
-//         prev.latitude,
-//         prev.longitude,
-//         curr.latitude,
-//         curr.longitude,
-//       );
-//       totalDistance += dist;
-//     }
-
-//     const session = await Session.findByIdAndUpdate(
-//       sessionId,
-//       { totalDistanceKm: parseFloat(totalDistance.toFixed(4)) },
-//       { new: true }
-//     );
-
-//     res.json({
-//       success: true,
-//       pointCount: locations.length,
-//       distance: parseFloat(totalDistance.toFixed(4)),
-//       session
-//     });
-
-//   } catch (err) {
-//     console.error('❌ Error recalculating distance:', err);
-//     res.status(500).json({ message: "Error recalculating distance" });
-//   }
-// });
-
-// // ─── GET SESSION BY ID ───────────────────────────────────────────────────────
+// // ─── GET SESSION BY ID ──────────────────────────────────────────────────
 // router.get('/:sessionId', async (req, res) => {
 //   try {
 //     const { sessionId } = req.params;
-
 //     const routePage = parseInt(req.query.routePage, 10) || null;
 //     const routeLimit = Math.min(parseInt(req.query.routeLimit, 10) || 1000, 5000);
 
 //     let session = await Session.findById(sessionId);
-
 //     if (!session) {
 //       return res.status(404).json({ message: 'Session not found' });
 //     }
@@ -840,58 +805,15 @@ module.exports = router;
 //     // ✅ Auto-end if stale
 //     session = await autoEndSessionIfStale(session);
 
-//     // ✅ For active sessions, rebuild route/distance/pointCount straight from
-//     //    the Location collection (each point is written independently via
-//     //    Location.create and is never subject to the read-modify-write races
-//     //    that used to affect the embedded `route` array). This is what the
-//     //    map screen and tracking screen render, so this is what guarantees
-//     //    the drawn route and the "X GPS points" / distance figures always
-//     //    agree with each other and with reality. Wrapped in the same
-//     //    per-session lock as /update so it can't race with an in-flight
-//     //    location write.
+//     // ✅ Always rebuild route for ACTIVE sessions
 //     if (session.status === 'ACTIVE') {
-//       session = await runExclusive(sessionId, async () => {
-//         try {
-//           const locations = await Location.find({ sessionId })
-//             .sort({ timestamp: 1 })
-//             .lean();
-
-//           if (locations.length > 0) {
-//             let recalculatedDist = 0;
-//             for (let i = 1; i < locations.length; i++) {
-//               recalculatedDist += calculateDistance(
-//                 locations[i - 1].latitude,
-//                 locations[i - 1].longitude,
-//                 locations[i].latitude,
-//                 locations[i].longitude,
-//               );
-//             }
-
-//             const route = locations.map(l => ({
-//               latitude: l.latitude,
-//               longitude: l.longitude,
-//               timestamp: l.timestamp,
-//             }));
-
-//             const updated = await Session.findByIdAndUpdate(
-//               sessionId,
-//               {
-//                 totalDistanceKm: parseFloat(recalculatedDist.toFixed(4)),
-//                 pointCount: locations.length,
-//                 route,
-//               },
-//               { new: true },
-//             );
-//             console.log(`📏 Route/distance synced from Location collection on fetch: ${updated.pointCount} points, ${updated.totalDistanceKm}km`);
-//             return updated;
-//           }
-//         } catch (distErr) {
-//           console.error('⚠️ Could not recalculate distance on fetch:', distErr.message);
-//         }
-//         return session;
-//       });
+//       const rebuilt = await rebuildSessionRoute(sessionId);
+//       if (rebuilt) {
+//         session = rebuilt;
+//       }
 //     }
 
+//     // ✅ Paginate route if requested
 //     if (routePage) {
 //       const sessionObj = session.toObject();
 //       const start = (routePage - 1) * routeLimit;
@@ -914,3 +836,4 @@ module.exports = router;
 // });
 
 // module.exports = router;
+
