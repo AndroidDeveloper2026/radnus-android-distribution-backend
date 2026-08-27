@@ -108,16 +108,40 @@ function isDuplicatePoint(prevPoint, latitude, longitude, timestamp) {
   return distanceMeters <= DUPLICATE_DISTANCE_METERS;
 }
 
-// ─── BROADCAST HELPER ──────────────────────────────────────────────────
-function broadcastAcceptedPoint(req, { sessionId, userId, latitude, longitude, timestamp, totalDistance, pointCount }) {
-  if (!req.io) {
-    console.warn('⚠️ req.io not available — skipping live broadcast');
-    return false;
-  }
+// // ─── BROADCAST HELPER ──────────────────────────────────────────────────
+// function broadcastAcceptedPoint(req, { sessionId, userId, latitude, longitude, timestamp, totalDistance, pointCount }) {
+//   if (!req.io) {
+//     console.warn('⚠️ req.io not available — skipping live broadcast');
+//     return false;
+//   }
   
+//   const payload = {
+//     sessionId,
+//     userId,
+//     latitude: parseFloat(latitude),
+//     longitude: parseFloat(longitude),
+//     timestamp: timestamp || new Date(),
+//     totalDistanceKm: parseFloat(totalDistance || 0),
+//     pointCount: parseInt(pointCount || 0),
+//     isCached: false,
+//   };
+  
+//   try {
+//     req.io.to(`session-${sessionId}`).emit('session-location', payload);
+//     req.io.emit('users-location', payload);
+//     console.log(`📡 Socket broadcast sent session=${sessionId} pointCount=${pointCount} totalDistanceKm=${totalDistance}`);
+//     return true;
+//   } catch (emitErr) {
+//     console.log(`❌ Socket broadcast failed session=${sessionId}:`, emitErr.message);
+//     return false;
+//   }
+// }
+
+function broadcastAcceptedPoint(req, { sessionId, userId, latitude, longitude, timestamp, totalDistance, pointCount }) {
+  if (!req.io) return false;
   const payload = {
-    sessionId,
-    userId,
+    sessionId: String(sessionId),
+    userId: String(userId),
     latitude: parseFloat(latitude),
     longitude: parseFloat(longitude),
     timestamp: timestamp || new Date(),
@@ -125,16 +149,11 @@ function broadcastAcceptedPoint(req, { sessionId, userId, latitude, longitude, t
     pointCount: parseInt(pointCount || 0),
     isCached: false,
   };
-  
   try {
     req.io.to(`session-${sessionId}`).emit('session-location', payload);
     req.io.emit('users-location', payload);
-    console.log(`📡 Socket broadcast sent session=${sessionId} pointCount=${pointCount} totalDistanceKm=${totalDistance}`);
     return true;
-  } catch (emitErr) {
-    console.log(`❌ Socket broadcast failed session=${sessionId}:`, emitErr.message);
-    return false;
-  }
+  } catch (e) { return false; }
 }
 
 // ── Core point-processing logic ──────────────────────────────────────────

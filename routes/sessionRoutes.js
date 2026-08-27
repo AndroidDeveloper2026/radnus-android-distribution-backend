@@ -1,11 +1,11 @@
 // sessionRoutes.js - COMPLETE FIXED VERSION
 
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const Session = require('../models/FSEModel/Session');
-const Location = require('../models/LocationModel/Location');
-const calculateDistance = require('../utils/distance');
-const { runExclusive } = require('../utils/sessionLock');
+const Session = require("../models/FSEModel/Session");
+const Location = require("../models/LocationModel/Location");
+const calculateDistance = require("../utils/distance");
+const { runExclusive } = require("../utils/sessionLock");
 
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -23,7 +23,7 @@ function isFromPreviousDay(date) {
 async function rebuildSessionRoute(sessionId) {
   try {
     console.log(`🔄 Rebuilding route for session ${sessionId}`);
-    
+
     const locations = await Location.find({ sessionId })
       .sort({ timestamp: 1 })
       .lean();
@@ -38,12 +38,14 @@ async function rebuildSessionRoute(sessionId) {
       const prev = locations[i - 1];
       const curr = locations[i];
       totalDistance += calculateDistance(
-        prev.latitude, prev.longitude,
-        curr.latitude, curr.longitude
+        prev.latitude,
+        prev.longitude,
+        curr.latitude,
+        curr.longitude,
       );
     }
 
-    const route = locations.map(l => ({
+    const route = locations.map((l) => ({
       latitude: l.latitude,
       longitude: l.longitude,
       timestamp: l.timestamp,
@@ -56,41 +58,46 @@ async function rebuildSessionRoute(sessionId) {
         totalDistanceKm: parseFloat(totalDistance.toFixed(4)),
         pointCount: locations.length,
       },
-      { new: true }
+      { new: true },
     );
 
-    console.log(`✅ Route rebuilt: ${locations.length} points, ${totalDistance.toFixed(4)}km`);
+    console.log(
+      `✅ Route rebuilt: ${locations.length} points, ${totalDistance.toFixed(4)}km`,
+    );
     return updatedSession;
   } catch (err) {
-    console.error(`❌ Failed to rebuild route for session ${sessionId}:`, err.message);
+    console.error(
+      `❌ Failed to rebuild route for session ${sessionId}:`,
+      err.message,
+    );
     return null;
   }
 }
 
 // ─── Auto-end stale sessions ────────────────────────────────────────────
 async function autoEndSessionIfStale(session) {
-  if (!session || session.status !== 'ACTIVE') return session;
-  
+  if (!session || session.status !== "ACTIVE") return session;
+
   // ✅ FIX: Only auto-end if more than 24 hours old
   const twentyFourHoursAgo = new Date();
   twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
-  
+
   if (session.startTime > twentyFourHoursAgo) {
     console.log(`✅ Session ${session._id} is recent, keeping active`);
     return session;
   }
-  
+
   if (!isFromPreviousDay(session.startTime)) return session;
 
   return runExclusive(session._id, async () => {
     const fresh = await Session.findById(session._id);
-    if (!fresh || fresh.status !== 'ACTIVE') return fresh || session;
+    if (!fresh || fresh.status !== "ACTIVE") return fresh || session;
 
     // ✅ Rebuild route before ending
     const rebuilt = await rebuildSessionRoute(session._id);
     const finalSession = rebuilt || fresh;
 
-    finalSession.status = 'AUTO_ENDED';
+    finalSession.status = "AUTO_ENDED";
     finalSession.endTime = finalSession.endTime || new Date();
     await finalSession.save();
 
@@ -102,15 +109,15 @@ async function autoEndSessionIfStale(session) {
 async function cleanupStaleSessions() {
   try {
     const staleSessions = await Session.find({
-      status: 'ACTIVE',
-      startTime: { $lt: getStartOfToday() }
+      status: "ACTIVE",
+      startTime: { $lt: getStartOfToday() },
     });
 
     for (const session of staleSessions) {
       await autoEndSessionIfStale(session);
     }
   } catch (err) {
-    console.log('❌ Error during stale session cleanup:', err.message);
+    console.log("❌ Error during stale session cleanup:", err.message);
   }
 }
 
@@ -118,7 +125,7 @@ cleanupStaleSessions();
 setInterval(cleanupStaleSessions, CLEANUP_INTERVAL_MS);
 
 // ─── GET ALL SESSIONS ────────────────────────────────────────────────────
-router.get('/', async (req, res) => {
+router.get("/", async (req, res) => {
   try {
     const page = parseInt(req.query.page, 10) || 1;
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
@@ -129,7 +136,11 @@ router.get('/', async (req, res) => {
     if (status) filter.status = status;
 
     const [sessions, total] = await Promise.all([
-      Session.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).select('-route'),
+      Session.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .select("-route"),
       Session.countDocuments(filter),
     ]);
 
@@ -144,17 +155,17 @@ router.get('/', async (req, res) => {
       },
     });
   } catch (err) {
-    console.log('❌ Error fetching sessions:', err.message);
+    console.log("❌ Error fetching sessions:", err.message);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
 // ─── CHECK TODAY'S SESSION ──────────────────────────────────────────────
-router.get('/today/:userId', async (req, res) => {
+router.get("/today/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
     if (!userId) {
-      return res.status(400).json({ message: 'userId is required' });
+      return res.status(400).json({ message: "userId is required" });
     }
 
     const startOfDay = getStartOfToday();
@@ -163,75 +174,90 @@ router.get('/today/:userId', async (req, res) => {
 
     const session = await Session.findOne({
       userId,
-      status: { $in: ['ACTIVE', 'AUTO_ENDED'] },
+      status: { $in: ["ACTIVE", "AUTO_ENDED"] },
       startTime: { $gte: startOfDay, $lte: endOfDay },
     });
 
     if (!session) {
-      return res.status(404).json({ message: 'No active session today' });
+      return res.status(404).json({ message: "No active session today" });
     }
 
-    // ✅ Rebuild route before returning
-    if (session.status === 'ACTIVE' || session.status === 'AUTO_ENDED') {
-      const rebuilt = await rebuildSessionRoute(session._id);
-      if (rebuilt) {
-        return res.json(rebuilt);
-      }
+    // // ✅ Rebuild route before returning
+    // if (session.status === 'ACTIVE' || session.status === 'AUTO_ENDED') {
+    //   const rebuilt = await rebuildSessionRoute(session._id);
+    //   if (rebuilt) {
+    //     return res.json(rebuilt);
+    //   }
+    // }
+
+    // Inside GET /:sessionId handler - 27-8-26:
+    if (session.status === "ACTIVE" || session.status === "AUTO_ENDED") {
+      // ✅ FIX: Lock during rebuild to prevent race with locationRoutes $inc
+      const rebuilt = await runExclusive(sessionId, async () => {
+        return await rebuildSessionRoute(sessionId);
+      });
+      if (rebuilt) session = rebuilt;
     }
 
     res.json(session);
   } catch (err) {
-    console.log('❌ Error in /today/:userId:', err);
-    res.status(500).json({ message: 'Error checking session', error: err.message });
+    console.log("❌ Error in /today/:userId:", err);
+    res
+      .status(500)
+      .json({ message: "Error checking session", error: err.message });
   }
 });
 
 // ─── ORPHANED SESSION CHECK ─────────────────────────────────────────────
-router.get('/orphaned/:userId', async (req, res) => {
+router.get("/orphaned/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
     if (!userId) {
-      return res.status(400).json({ message: 'userId is required' });
+      return res.status(400).json({ message: "userId is required" });
     }
 
     const orphaned = await Session.findOne({
       userId,
-      status: 'ACTIVE',
-      startTime: { $lt: getStartOfToday() }
+      status: "ACTIVE",
+      startTime: { $lt: getStartOfToday() },
     });
 
     if (!orphaned) {
-      return res.status(404).json({ message: 'No orphaned session found' });
+      return res.status(404).json({ message: "No orphaned session found" });
     }
 
     // ✅ Rebuild route before returning
     const rebuilt = await rebuildSessionRoute(orphaned._id);
     res.json(rebuilt || orphaned);
   } catch (err) {
-    console.log('❌ Error checking orphaned session:', err.message);
-    res.status(500).json({ message: 'Error checking orphaned session', error: err.message });
+    console.log("❌ Error checking orphaned session:", err.message);
+    res
+      .status(500)
+      .json({ message: "Error checking orphaned session", error: err.message });
   }
 });
 
 // ─── START SESSION ──────────────────────────────────────────────────────
-router.post('/start', async (req, res) => {
+router.post("/start", async (req, res) => {
   try {
     const { userId, latitude, longitude } = req.body;
 
-    if (!userId || userId.toString().trim() === '') {
-      return res.status(400).json({ message: 'userId is required' });
+    if (!userId || userId.toString().trim() === "") {
+      return res.status(400).json({ message: "userId is required" });
     }
-    if (latitude === undefined || latitude === null || latitude === '') {
-      return res.status(400).json({ message: 'latitude is required' });
+    if (latitude === undefined || latitude === null || latitude === "") {
+      return res.status(400).json({ message: "latitude is required" });
     }
-    if (longitude === undefined || longitude === null || longitude === '') {
-      return res.status(400).json({ message: 'longitude is required' });
+    if (longitude === undefined || longitude === null || longitude === "") {
+      return res.status(400).json({ message: "longitude is required" });
     }
 
     const lat = parseFloat(latitude);
     const lng = parseFloat(longitude);
     if (isNaN(lat) || isNaN(lng)) {
-      return res.status(400).json({ message: 'latitude and longitude must be valid numbers' });
+      return res
+        .status(400)
+        .json({ message: "latitude and longitude must be valid numbers" });
     }
 
     const startOfDay = getStartOfToday();
@@ -240,12 +266,14 @@ router.post('/start', async (req, res) => {
 
     const existingSession = await Session.findOne({
       userId,
-      status: { $in: ['ACTIVE', 'AUTO_ENDED'] },
+      status: { $in: ["ACTIVE", "AUTO_ENDED"] },
       startTime: { $gte: startOfDay, $lte: endOfDay },
     });
 
     if (existingSession) {
-      console.log(`⚠️ Session already exists for today - sessionId: ${existingSession._id}`);
+      console.log(
+        `⚠️ Session already exists for today - sessionId: ${existingSession._id}`,
+      );
       return res.json(existingSession);
     }
 
@@ -255,7 +283,7 @@ router.post('/start', async (req, res) => {
       userId,
       startLocation: lockedStartLocation,
       route: [{ latitude: lat, longitude: lng, timestamp: new Date() }],
-      status: 'ACTIVE',
+      status: "ACTIVE",
       totalDistanceKm: 0,
       pointCount: 1,
     });
@@ -272,28 +300,33 @@ router.post('/start', async (req, res) => {
         longitude: lng,
         timestamp: savedSession.startTime,
       });
-      console.log(`✅ Start point saved to Location for session ${savedSession._id}`);
+      console.log(
+        `✅ Start point saved to Location for session ${savedSession._id}`,
+      );
     } catch (locErr) {
-      console.error('⚠️ Could not save start point to Location:', locErr.message);
+      console.error(
+        "⚠️ Could not save start point to Location:",
+        locErr.message,
+      );
     }
 
     res.status(201).json(savedSession);
   } catch (err) {
-    console.log('❌ ERROR in /start:', err.message);
+    console.log("❌ ERROR in /start:", err.message);
     res.status(500).json({
-      message: 'Error starting session',
+      message: "Error starting session",
       error: err.message,
-      details: err.name === 'ValidationError' ? err.errors : null,
+      details: err.name === "ValidationError" ? err.errors : null,
     });
   }
 });
 
 // ─── END SESSION ────────────────────────────────────────────────────────
-router.post('/end', async (req, res) => {
+router.post("/end", async (req, res) => {
   try {
     const { sessionId, finalLocation } = req.body;
     if (!sessionId) {
-      return res.status(400).json({ message: 'Session ID required' });
+      return res.status(400).json({ message: "Session ID required" });
     }
 
     console.log(`📤 Ending session: ${sessionId}`);
@@ -302,7 +335,9 @@ router.post('/end', async (req, res) => {
       // ✅ Save final location if provided
       if (finalLocation && finalLocation.latitude && finalLocation.longitude) {
         try {
-          const existing = await Session.findById(sessionId).select('userId').lean();
+          const existing = await Session.findById(sessionId)
+            .select("userId")
+            .lean();
           if (existing) {
             await Location.create({
               userId: existing.userId,
@@ -311,10 +346,10 @@ router.post('/end', async (req, res) => {
               longitude: finalLocation.longitude,
               timestamp: new Date(),
             });
-            console.log('✅ Final location saved');
+            console.log("✅ Final location saved");
           }
         } catch (locErr) {
-          console.error('⚠️ Could not save final location:', locErr.message);
+          console.error("⚠️ Could not save final location:", locErr.message);
         }
       }
 
@@ -325,10 +360,10 @@ router.post('/end', async (req, res) => {
         const updated = await Session.findByIdAndUpdate(
           sessionId,
           {
-            status: 'ENDED',
+            status: "ENDED",
             endTime: new Date(),
           },
-          { new: true }
+          { new: true },
         );
         return updated;
       }
@@ -337,46 +372,50 @@ router.post('/end', async (req, res) => {
       const updated = await Session.findByIdAndUpdate(
         sessionId,
         {
-          status: 'ENDED',
+          status: "ENDED",
           endTime: new Date(),
         },
-        { new: true }
+        { new: true },
       );
       return updated;
     });
 
     if (!session) {
-      return res.status(404).json({ message: 'Session not found' });
+      return res.status(404).json({ message: "Session not found" });
     }
 
-    console.log(`✅ Session ended - ${sessionId}, Distance: ${session.totalDistanceKm}km, Points: ${session.pointCount}`);
+    console.log(
+      `✅ Session ended - ${sessionId}, Distance: ${session.totalDistanceKm}km, Points: ${session.pointCount}`,
+    );
     res.json(session);
   } catch (err) {
-    console.error('❌ Error ending session:', err.message);
-    res.status(500).json({ message: 'Error ending session', error: err.message });
+    console.error("❌ Error ending session:", err.message);
+    res
+      .status(500)
+      .json({ message: "Error ending session", error: err.message });
   }
 });
 
 // ─── FORCE REBUILD ENDPOINT ─────────────────────────────────────────────
-router.post('/rebuild/:sessionId', async (req, res) => {
+router.post("/rebuild/:sessionId", async (req, res) => {
   try {
     const { sessionId } = req.params;
     console.log(`🔄 Manually rebuilding route for ${sessionId}`);
-    
+
     const rebuilt = await rebuildSessionRoute(sessionId);
-    
+
     if (rebuilt) {
       res.json({
         success: true,
         pointCount: rebuilt.pointCount,
         totalDistanceKm: rebuilt.totalDistanceKm,
         routeLength: rebuilt.route?.length || 0,
-        session: rebuilt
+        session: rebuilt,
       });
     } else {
       res.json({
         success: false,
-        message: 'No locations found for this session'
+        message: "No locations found for this session",
       });
     }
   } catch (err) {
@@ -385,34 +424,41 @@ router.post('/rebuild/:sessionId', async (req, res) => {
 });
 
 // ─── GET SESSION BY ID ──────────────────────────────────────────────────
-router.get('/:sessionId', async (req, res) => {
+router.get("/:sessionId", async (req, res) => {
   try {
     const { sessionId } = req.params;
     const routePage = parseInt(req.query.routePage, 10) || null;
-    const routeLimit = Math.min(parseInt(req.query.routeLimit, 10) || 1000, 5000);
+    const routeLimit = Math.min(
+      parseInt(req.query.routeLimit, 10) || 1000,
+      5000,
+    );
 
     let session = await Session.findById(sessionId);
     if (!session) {
-      return res.status(404).json({ message: 'Session not found' });
+      return res.status(404).json({ message: "Session not found" });
     }
 
     // ✅ ALWAYS rebuild route for ACTIVE sessions
-    if (session.status === 'ACTIVE' || session.status === 'AUTO_ENDED') {
-      console.log(`🔄 Rebuilding route for session ${sessionId} (status: ${session.status})`);
+    if (session.status === "ACTIVE" || session.status === "AUTO_ENDED") {
+      console.log(
+        `🔄 Rebuilding route for session ${sessionId} (status: ${session.status})`,
+      );
       const rebuilt = await rebuildSessionRoute(sessionId);
       if (rebuilt) {
         session = rebuilt;
-        console.log(`✅ Route rebuilt: ${session.route?.length || 0} points, ${session.totalDistanceKm}km`);
+        console.log(
+          `✅ Route rebuilt: ${session.route?.length || 0} points, ${session.totalDistanceKm}km`,
+        );
       } else {
         console.log(`⚠️ No locations found for session ${sessionId}`);
       }
     }
 
     // ✅ Auto-end if stale (but only if > 24 hours old)
-    if (session.status === 'ACTIVE') {
+    if (session.status === "ACTIVE") {
       const twentyFourHoursAgo = new Date();
       twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
-      
+
       if (session.startTime < twentyFourHoursAgo) {
         console.log(`⏰ Session ${sessionId} is > 24 hours old, auto-ending`);
         session = await autoEndSessionIfStale(session);
@@ -436,8 +482,10 @@ router.get('/:sessionId', async (req, res) => {
 
     res.json(session);
   } catch (err) {
-    console.error('❌ Error fetching session:', err.message);
-    res.status(500).json({ message: 'Error fetching session', error: err.message });
+    console.error("❌ Error fetching session:", err.message);
+    res
+      .status(500)
+      .json({ message: "Error fetching session", error: err.message });
   }
 });
 
@@ -836,4 +884,3 @@ module.exports = router;
 // });
 
 // module.exports = router;
-
