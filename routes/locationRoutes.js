@@ -44,31 +44,18 @@ async function rebuildSessionRoute(sessionId) {
       timestamp: l.timestamp,
     }));
 
-    // const updatedSession = await Session.findByIdAndUpdate(
-    //   sessionId,
-    //   {
-    //     route: route,
-    //     totalDistanceKm: parseFloat(totalDistance.toFixed(4)),
-    //     pointCount: locations.length,
-    //   },
-    //   { new: true }
-    // );
-
-        // ✅ Update session
+    // ✅ FIX: This function rebuilds the ENTIRE route from the Location
+    // collection (the real source of truth), so it must SET the route/
+    // totals directly — not $inc/$push, which was referencing undefined
+    // variables (distanceIncrement/lat/lng/timestamp) and threw a
+    // ReferenceError on every call, silently killing route persistence
+    // during active tracking (caught by the catch block below).
     const updatedSession = await Session.findByIdAndUpdate(
       sessionId,
       {
-        $inc: {
-          totalDistanceKm: parseFloat(distanceIncrement.toFixed(6)),
-          pointCount: 1,
-        },
-        $push: {
-          route: {
-            latitude: lat,
-            longitude: lng,
-            timestamp: timestamp || new Date(),
-          }
-        }
+        route: route,
+        totalDistanceKm: parseFloat(totalDistance.toFixed(4)),
+        pointCount: locations.length,
       },
       { new: true }
     );
@@ -562,16 +549,13 @@ router.get("/debug/:sessionId", async (req, res) => {
 
 module.exports = router;
 
-//================ 19.08.2026 ============================
-// // locationRoutes.js - COMPLETE FIXED VERSION
-
+//------------- 28.8.26 --------------------
 // const express = require("express");
 // const router = express.Router();
 // const Location = require("../models/LocationModel/Location");
 // const Session = require("../models/FSEModel/Session");
 // const calculateDistance = require("../utils/distance");
 
-// // ✅ FIX: Increased thresholds for better GPS acceptance
 // const MAX_ACCEPTABLE_ACCURACY_METERS = 150;
 // const MAX_JUMP_METERS = 2000;
 // const MAX_JUMP_WINDOW_MS = 10000;
@@ -612,12 +596,31 @@ module.exports = router;
 //       timestamp: l.timestamp,
 //     }));
 
+//     // const updatedSession = await Session.findByIdAndUpdate(
+//     //   sessionId,
+//     //   {
+//     //     route: route,
+//     //     totalDistanceKm: parseFloat(totalDistance.toFixed(4)),
+//     //     pointCount: locations.length,
+//     //   },
+//     //   { new: true }
+//     // );
+
+//         // ✅ Update session
 //     const updatedSession = await Session.findByIdAndUpdate(
 //       sessionId,
 //       {
-//         route: route,
-//         totalDistanceKm: parseFloat(totalDistance.toFixed(4)),
-//         pointCount: locations.length,
+//         $inc: {
+//           totalDistanceKm: parseFloat(distanceIncrement.toFixed(6)),
+//           pointCount: 1,
+//         },
+//         $push: {
+//           route: {
+//             latitude: lat,
+//             longitude: lng,
+//             timestamp: timestamp || new Date(),
+//           }
+//         }
 //       },
 //       { new: true }
 //     );
@@ -649,7 +652,6 @@ module.exports = router;
 
 //   const speedMps = distanceMeters / dtSeconds;
 
-//   // ✅ FIX: Only reject extreme jumps
 //   if (distanceMeters > MAX_JUMP_METERS && dtMs <= MAX_JUMP_WINDOW_MS) {
 //     return { reject: true, reason: 'GPS jump exceeds 2km within 10s', distanceMeters, speedMps };
 //   }
@@ -677,16 +679,40 @@ module.exports = router;
 //   return distanceMeters <= DUPLICATE_DISTANCE_METERS;
 // }
 
-// // ─── BROADCAST HELPER ──────────────────────────────────────────────────
-// function broadcastAcceptedPoint(req, { sessionId, userId, latitude, longitude, timestamp, totalDistance, pointCount }) {
-//   if (!req.io) {
-//     console.warn('⚠️ req.io not available — skipping live broadcast');
-//     return false;
-//   }
+// // // ─── BROADCAST HELPER ──────────────────────────────────────────────────
+// // function broadcastAcceptedPoint(req, { sessionId, userId, latitude, longitude, timestamp, totalDistance, pointCount }) {
+// //   if (!req.io) {
+// //     console.warn('⚠️ req.io not available — skipping live broadcast');
+// //     return false;
+// //   }
   
+// //   const payload = {
+// //     sessionId,
+// //     userId,
+// //     latitude: parseFloat(latitude),
+// //     longitude: parseFloat(longitude),
+// //     timestamp: timestamp || new Date(),
+// //     totalDistanceKm: parseFloat(totalDistance || 0),
+// //     pointCount: parseInt(pointCount || 0),
+// //     isCached: false,
+// //   };
+  
+// //   try {
+// //     req.io.to(`session-${sessionId}`).emit('session-location', payload);
+// //     req.io.emit('users-location', payload);
+// //     console.log(`📡 Socket broadcast sent session=${sessionId} pointCount=${pointCount} totalDistanceKm=${totalDistance}`);
+// //     return true;
+// //   } catch (emitErr) {
+// //     console.log(`❌ Socket broadcast failed session=${sessionId}:`, emitErr.message);
+// //     return false;
+// //   }
+// // }
+
+// function broadcastAcceptedPoint(req, { sessionId, userId, latitude, longitude, timestamp, totalDistance, pointCount }) {
+//   if (!req.io) return false;
 //   const payload = {
-//     sessionId,
-//     userId,
+//     sessionId: String(sessionId),
+//     userId: String(userId),
 //     latitude: parseFloat(latitude),
 //     longitude: parseFloat(longitude),
 //     timestamp: timestamp || new Date(),
@@ -694,27 +720,20 @@ module.exports = router;
 //     pointCount: parseInt(pointCount || 0),
 //     isCached: false,
 //   };
-  
 //   try {
 //     req.io.to(`session-${sessionId}`).emit('session-location', payload);
 //     req.io.emit('users-location', payload);
-//     console.log(`📡 Socket broadcast sent session=${sessionId} pointCount=${pointCount} totalDistanceKm=${totalDistance}`);
 //     return true;
-//   } catch (emitErr) {
-//     console.log(`❌ Socket broadcast failed session=${sessionId}:`, emitErr.message);
-//     return false;
-//   }
+//   } catch (e) { return false; }
 // }
 
 // // ── Core point-processing logic ──────────────────────────────────────────
 // async function processLocationPoint({ userId, sessionId, latitude, longitude, accuracy, timestamp }) {
-//   // ✅ Validate inputs
 //   if (!userId || !sessionId || latitude === undefined || longitude === undefined) {
 //     console.error('❌ Invalid location point data:', { userId, sessionId, latitude, longitude });
 //     return { status: 400, body: { message: 'Missing required fields' } };
 //   }
 
-//   // ✅ Parse and validate coordinates
 //   const lat = parseFloat(latitude);
 //   const lng = parseFloat(longitude);
   
@@ -728,7 +747,6 @@ module.exports = router;
 //     return { status: 400, body: { message: 'Coordinates out of range' } };
 //   }
 
-//   // ✅ Validate accuracy - warn but don't reject
 //   const accuracyNum = parseFloat(accuracy);
 //   if (accuracyNum > MAX_ACCEPTABLE_ACCURACY_METERS) {
 //     console.log(`⚠️ Low GPS accuracy: ${accuracyNum}m (still accepting)`);
@@ -740,18 +758,15 @@ module.exports = router;
 //     return { status: 404, body: { message: 'Session not found' } };
 //   }
 
-//   // ✅ FIX: Check session status
 //   if (session.status !== 'ACTIVE') {
 //     console.warn(`⚠️ Session ${sessionId} is not active (status: ${session.status})`);
     
-//     // ✅ If session is AUTO_ENDED, try to reactivate
 //     if (session.status === 'AUTO_ENDED') {
 //       console.log(`🔄 Attempting to reactivate AUTO_ENDED session ${sessionId}`);
 //       const now = new Date();
 //       const startOfDay = new Date();
 //       startOfDay.setHours(0, 0, 0, 0);
       
-//       // ✅ Only reactivate if it's still the same day
 //       if (session.startTime >= startOfDay) {
 //         console.log(`✅ Reactivating session ${sessionId}`);
 //         session.status = 'ACTIVE';
@@ -765,7 +780,6 @@ module.exports = router;
 //     }
 //   }
 
-//   // ✅ Get the last route point
 //   const lastRoutePoint = session.route.length > 0
 //     ? session.route[session.route.length - 1]
 //     : session.startLocation
@@ -805,14 +819,34 @@ module.exports = router;
 //     }
 //   }
 
-//   // ✅ Save location to Location collection
-//   const location = await Location.create({
-//     userId,
-//     sessionId,
-//     latitude: lat,
-//     longitude: lng,
-//     timestamp: timestamp || new Date(),
-//   });
+//   // ✅ Save location - FIXED: Handle duplicate key errors
+//   let location;
+//   try {
+//     location = await Location.create({
+//       userId,
+//       sessionId,
+//       latitude: lat,
+//       longitude: lng,
+//       timestamp: timestamp || new Date(),
+//       accuracy: accuracyNum || 0
+//     });
+//   } catch (err) {
+//     // ✅ If duplicate key error, it's likely a duplicate location
+//     if (err.code === 11000) {
+//       console.log(`📌 Duplicate location detected for session ${sessionId}, skipping save`);
+//       return {
+//         status: 200,
+//         body: {
+//           success: true,
+//           skipped: true,
+//           reason: 'duplicate_key',
+//           totalDistance: session.totalDistanceKm || 0,
+//           pointCount: session.pointCount || 0,
+//         },
+//       };
+//     }
+//     throw err;
+//   }
 
 //   // ✅ Calculate distance from previous location
 //   let distanceIncrement = 0;
@@ -828,7 +862,7 @@ module.exports = router;
 //     }
 //   }
 
-//   // ✅ Update session - increment distance and pointCount
+//   // ✅ Update session
 //   const updatedSession = await Session.findByIdAndUpdate(
 //     sessionId,
 //     {
@@ -840,7 +874,7 @@ module.exports = router;
 //     { new: true }
 //   );
 
-//   // ✅ Rebuild route periodically (every 5 points)
+//   // ✅ Rebuild route periodically
 //   const shouldRebuild = updatedSession.pointCount % 5 === 0;
 //   let finalSession = updatedSession;
 
@@ -889,9 +923,8 @@ module.exports = router;
 //       processLocationPoint({ userId, sessionId, latitude, longitude, accuracy, timestamp: timestamp || new Date() })
 //     );
 
-//     // ✅ ALWAYS broadcast if successful (even if skipped)
 //     if (result.status === 200 && result.body?.success) {
-//       const broadcastSent = broadcastAcceptedPoint(req, {
+//       broadcastAcceptedPoint(req, {
 //         userId,
 //         sessionId,
 //         latitude,
@@ -900,16 +933,26 @@ module.exports = router;
 //         totalDistance: result.body.totalDistance || 0,
 //         pointCount: result.body.pointCount || 0,
 //       });
-      
-//       if (broadcastSent) {
-//         console.log(`✅ Broadcast sent for session ${sessionId}`);
-//       }
 //     }
 
 //     return res.status(result.status).json(result.body);
 //   } catch (err) {
 //     console.error('❌ Error updating location:', err);
-//     res.status(500).json({ message: "Error updating location", error: err.message });
+    
+//     // ✅ Better error handling for duplicate keys
+//     if (err.code === 11000) {
+//       return res.status(200).json({
+//         success: true,
+//         skipped: true,
+//         reason: 'duplicate_key',
+//         message: 'Duplicate location (already exists)'
+//       });
+//     }
+    
+//     res.status(500).json({ 
+//       message: "Error updating location", 
+//       error: err.message 
+//     });
 //   }
 // });
 
@@ -941,20 +984,6 @@ module.exports = router;
 //         );
 
 //         if (result.body.success !== false) successCount++;
-
-//         // ✅ Broadcast for batch points too
-//         if (result.status === 200 && result.body?.success) {
-//           broadcastAcceptedPoint(req, {
-//             userId,
-//             sessionId,
-//             latitude,
-//             longitude,
-//             timestamp: timestamp || new Date(),
-//             totalDistance: result.body.totalDistance || 0,
-//             pointCount: result.body.pointCount || 0,
-//           });
-//         }
-
 //         results.push(result.body);
 //       } catch (pointErr) {
 //         console.error('❌ Error processing batched point:', pointErr.message);
@@ -980,8 +1009,6 @@ module.exports = router;
 // router.get("/session/:sessionId", async (req, res) => {
 //   try {
 //     const { sessionId } = req.params;
-
-//     // ✅ ALWAYS rebuild route from Location collection
 //     const rebuiltSession = await rebuildSessionRoute(sessionId);
     
 //     if (!rebuiltSession) {
@@ -1050,7 +1077,7 @@ module.exports = router;
 //   }
 // });
 
-// // ✅ DEBUG ENDPOINT - Check location collection
+// // ─── DEBUG ENDPOINT ────────────────────────────────────────────────────
 // router.get("/debug/:sessionId", async (req, res) => {
 //   try {
 //     const { sessionId } = req.params;
@@ -1075,7 +1102,8 @@ module.exports = router;
 //         sample: locations.map(l => ({
 //           lat: l.latitude,
 //           lng: l.longitude,
-//           timestamp: l.timestamp
+//           timestamp: l.timestamp,
+//           accuracy: l.accuracy
 //         }))
 //       }
 //     });
