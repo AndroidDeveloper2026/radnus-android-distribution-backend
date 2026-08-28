@@ -44,12 +44,31 @@ async function rebuildSessionRoute(sessionId) {
       timestamp: l.timestamp,
     }));
 
+    // const updatedSession = await Session.findByIdAndUpdate(
+    //   sessionId,
+    //   {
+    //     route: route,
+    //     totalDistanceKm: parseFloat(totalDistance.toFixed(4)),
+    //     pointCount: locations.length,
+    //   },
+    //   { new: true }
+    // );
+
+        // ✅ Update session
     const updatedSession = await Session.findByIdAndUpdate(
       sessionId,
       {
-        route: route,
-        totalDistanceKm: parseFloat(totalDistance.toFixed(4)),
-        pointCount: locations.length,
+        $inc: {
+          totalDistanceKm: parseFloat(distanceIncrement.toFixed(6)),
+          pointCount: 1,
+        },
+        $push: {
+          route: {
+            latitude: lat,
+            longitude: lng,
+            timestamp: timestamp || new Date(),
+          }
+        }
       },
       { new: true }
     );
