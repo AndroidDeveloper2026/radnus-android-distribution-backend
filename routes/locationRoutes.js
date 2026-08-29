@@ -4,12 +4,13 @@ const Location = require("../models/LocationModel/Location");
 const Session = require("../models/FSEModel/Session");
 const calculateDistance = require("../utils/distance");
 
-const MAX_ACCEPTABLE_ACCURACY_METERS = 150;
+// ✅ FIX 1: Less aggressive filters (matches real GPS accuracy)
+const MAX_ACCEPTABLE_ACCURACY_METERS = 200;  // Increased from 150
 const MAX_JUMP_METERS = 2000;
 const MAX_JUMP_WINDOW_MS = 10000;
 const MAX_PLAUSIBLE_SPEED_MPS = 100;
-const DUPLICATE_WINDOW_MS = 3000;
-const DUPLICATE_DISTANCE_METERS = 1;
+const DUPLICATE_WINDOW_MS = 5000;  // Increased from 3000
+const DUPLICATE_DISTANCE_METERS = 10;  // ✅ INCREASED FROM 1 TO 10 METERS
 
 const kmToMeters = km => km * 1000;
 const { runExclusive } = require("../utils/sessionLock");
@@ -44,12 +45,6 @@ async function rebuildSessionRoute(sessionId) {
       timestamp: l.timestamp,
     }));
 
-    // ✅ FIX: This function rebuilds the ENTIRE route from the Location
-    // collection (the real source of truth), so it must SET the route/
-    // totals directly — not $inc/$push, which was referencing undefined
-    // variables (distanceIncrement/lat/lng/timestamp) and threw a
-    // ReferenceError on every call, silently killing route persistence
-    // during active tracking (caught by the catch block below).
     const updatedSession = await Session.findByIdAndUpdate(
       sessionId,
       {
@@ -111,37 +106,9 @@ function isDuplicatePoint(prevPoint, latitude, longitude, timestamp) {
   );
   const distanceMeters = kmToMeters(distanceKm);
 
+  // ✅ FIX: 10 meters minimum (was 1 meter)
   return distanceMeters <= DUPLICATE_DISTANCE_METERS;
 }
-
-// // ─── BROADCAST HELPER ──────────────────────────────────────────────────
-// function broadcastAcceptedPoint(req, { sessionId, userId, latitude, longitude, timestamp, totalDistance, pointCount }) {
-//   if (!req.io) {
-//     console.warn('⚠️ req.io not available — skipping live broadcast');
-//     return false;
-//   }
-  
-//   const payload = {
-//     sessionId,
-//     userId,
-//     latitude: parseFloat(latitude),
-//     longitude: parseFloat(longitude),
-//     timestamp: timestamp || new Date(),
-//     totalDistanceKm: parseFloat(totalDistance || 0),
-//     pointCount: parseInt(pointCount || 0),
-//     isCached: false,
-//   };
-  
-//   try {
-//     req.io.to(`session-${sessionId}`).emit('session-location', payload);
-//     req.io.emit('users-location', payload);
-//     console.log(`📡 Socket broadcast sent session=${sessionId} pointCount=${pointCount} totalDistanceKm=${totalDistance}`);
-//     return true;
-//   } catch (emitErr) {
-//     console.log(`❌ Socket broadcast failed session=${sessionId}:`, emitErr.message);
-//     return false;
-//   }
-// }
 
 function broadcastAcceptedPoint(req, { sessionId, userId, latitude, longitude, timestamp, totalDistance, pointCount }) {
   if (!req.io) return false;
@@ -221,9 +188,9 @@ async function processLocationPoint({ userId, sessionId, latitude, longitude, ac
       ? { latitude: session.startLocation.latitude, longitude: session.startLocation.longitude, timestamp: session.startTime }
       : null;
 
-  // ✅ Deduplication check
+  // ✅ FIX: More lenient deduplication check (10 meters)
   if (lastRoutePoint && isDuplicatePoint(lastRoutePoint, lat, lng, timestamp)) {
-    console.log(`📌 Duplicate point skipped for session ${sessionId}`);
+    console.log(`📌 Duplicate point skipped for session ${sessionId} (within ${DUPLICATE_DISTANCE_METERS}m)`);
     return {
       status: 200,
       body: {
@@ -254,7 +221,7 @@ async function processLocationPoint({ userId, sessionId, latitude, longitude, ac
     }
   }
 
-  // ✅ Save location - FIXED: Handle duplicate key errors
+  // ✅ Save location
   let location;
   try {
     location = await Location.create({
@@ -266,7 +233,6 @@ async function processLocationPoint({ userId, sessionId, latitude, longitude, ac
       accuracy: accuracyNum || 0
     });
   } catch (err) {
-    // ✅ If duplicate key error, it's likely a duplicate location
     if (err.code === 11000) {
       console.log(`📌 Duplicate location detected for session ${sessionId}, skipping save`);
       return {
@@ -292,6 +258,7 @@ async function processLocationPoint({ userId, sessionId, latitude, longitude, ac
       lat,
       lng
     );
+    // ✅ FIX: Keep even small distances (don't filter out)
     if (distanceIncrement <= 0.0001) {
       distanceIncrement = 0;
     }
@@ -358,18 +325,6 @@ router.post("/update", async (req, res) => {
       processLocationPoint({ userId, sessionId, latitude, longitude, accuracy, timestamp: timestamp || new Date() })
     );
 
-    // ✅ FIX: `success: true` is set on the response body for BOTH genuinely
-    // saved points AND points the filters deliberately threw away
-    // (duplicate / GPS-jump — see processLocationPoint's early returns,
-    // which also set success:true so the client treats them as "handled
-    // OK", not an error). Broadcasting on `success` alone meant every
-    // submitted point — including ones that changed nothing in the DB —
-    // got pushed to the live map with its raw coordinates, while
-    // totalDistance/pointCount correctly stayed frozen. That's exactly
-    // why the map line kept growing while "Today's Travel" stayed at
-    // 0.00 KM / 1 pt: the line was drawing filtered-out points that were
-    // never actually counted. Only broadcast points that were truly
-    // persisted, so the line and the numbers always agree.
     if (result.status === 200 && result.body?.success && !result.body?.skipped) {
       broadcastAcceptedPoint(req, {
         userId,
@@ -386,7 +341,6 @@ router.post("/update", async (req, res) => {
   } catch (err) {
     console.error('❌ Error updating location:', err);
     
-    // ✅ Better error handling for duplicate keys
     if (err.code === 11000) {
       return res.status(200).json({
         success: true,
@@ -456,40 +410,61 @@ router.post("/batch-sync", async (req, res) => {
 router.get("/session/:sessionId", async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const rebuiltSession = await rebuildSessionRoute(sessionId);
-    
-    if (!rebuiltSession) {
-      const session = await Session.findById(sessionId);
-      if (!session) {
-        return res.status(404).json({ message: "Session not found" });
-      }
-      return res.json({
-        _id: session._id,
-        userId: session.userId,
-        startTime: session.startTime,
-        endTime: session.endTime,
-        startLocation: session.startLocation,
-        route: session.route || [],
-        totalDistanceKm: session.totalDistanceKm || 0,
-        pointCount: session.pointCount || 0,
-        status: session.status,
-      });
+    const routePage = parseInt(req.query.routePage, 10) || null;
+    const routeLimit = Math.min(
+      parseInt(req.query.routeLimit, 10) || 1000,
+      5000,
+    );
+
+    let session = await Session.findById(sessionId);
+    if (!session) {
+      return res.status(404).json({ message: "Session not found" });
     }
 
-    res.json({
-      _id: rebuiltSession._id,
-      userId: rebuiltSession.userId,
-      startTime: rebuiltSession.startTime,
-      endTime: rebuiltSession.endTime,
-      startLocation: rebuiltSession.startLocation,
-      route: rebuiltSession.route || [],
-      totalDistanceKm: rebuiltSession.totalDistanceKm || 0,
-      pointCount: rebuiltSession.pointCount || 0,
-      status: rebuiltSession.status,
-    });
+    if (session.status === "ACTIVE" || session.status === "AUTO_ENDED") {
+      const rebuilt = await runExclusive(sessionId, async () => {
+        return await rebuildSessionRoute(sessionId);
+      });
+      if (rebuilt) {
+        session = rebuilt;
+        console.log(
+          `✅ Route rebuilt: ${session.route?.length || 0} points, ${session.totalDistanceKm}km`,
+        );
+      } else {
+        console.log(`⚠️ No locations found for session ${sessionId}`);
+      }
+    }
+
+    if (session.status === "ACTIVE") {
+      const twentyFourHoursAgo = new Date();
+      twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+      if (session.startTime < twentyFourHoursAgo) {
+        console.log(`⏰ Session ${sessionId} is > 24 hours old, auto-ending`);
+        session = await autoEndSessionIfStale(session);
+      }
+    }
+
+    if (routePage) {
+      const sessionObj = session.toObject();
+      const start = (routePage - 1) * routeLimit;
+      const totalPoints = sessionObj.route.length;
+      sessionObj.route = sessionObj.route.slice(start, start + routeLimit);
+      sessionObj.routePagination = {
+        page: routePage,
+        limit: routeLimit,
+        total: totalPoints,
+        totalPages: Math.ceil(totalPoints / routeLimit),
+      };
+      return res.json(sessionObj);
+    }
+
+    res.json(session);
   } catch (err) {
-    console.error('❌ Error fetching session:', err);
-    res.status(500).json({ message: "Error fetching session", error: err.message });
+    console.error('❌ Error fetching session:', err.message);
+    res
+      .status(500)
+      .json({ message: "Error fetching session", error: err.message });
   }
 });
 
@@ -558,6 +533,46 @@ router.get("/debug/:sessionId", async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+
+// ─── AUTO-END STALE SESSIONS ────────────────────────────────────────────
+async function autoEndSessionIfStale(session) {
+  if (!session || session.status !== "ACTIVE") return session;
+
+  const twentyFourHoursAgo = new Date();
+  twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+  if (session.startTime > twentyFourHoursAgo) {
+    console.log(`✅ Session ${session._id} is recent, keeping active`);
+    return session;
+  }
+
+  if (!isFromPreviousDay(session.startTime)) return session;
+
+  return runExclusive(session._id, async () => {
+    const fresh = await Session.findById(session._id);
+    if (!fresh || fresh.status !== "ACTIVE") return fresh || session;
+
+    const rebuilt = await rebuildSessionRoute(session._id);
+    const finalSession = rebuilt || fresh;
+
+    finalSession.status = "AUTO_ENDED";
+    finalSession.endTime = finalSession.endTime || new Date();
+    await finalSession.save();
+
+    console.log(`🧹 Auto-ended session ${finalSession._id}`);
+    return finalSession;
+  });
+}
+
+function getStartOfToday() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function isFromPreviousDay(date) {
+  return new Date(date) < getStartOfToday();
+}
 
 module.exports = router;
 
