@@ -30,6 +30,15 @@ async function rebuildSessionRoute(sessionId) {
 
     if (locations.length === 0) {
       console.log(`⚠️ No locations found for session ${sessionId}`);
+      // ✅ FIX: Check if session has route points already
+      const session = await Session.findById(sessionId).select("route pointCount totalDistanceKm");
+      if (session && session.route && session.route.length > 0) {
+        console.log(`📌 Session has ${session.route.length} route points, updating pointCount`);
+        await Session.findByIdAndUpdate(sessionId, {
+          pointCount: session.route.length
+        });
+        return session;
+      }
       return null;
     }
 
@@ -138,13 +147,21 @@ router.get("/", async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .select("-route"),
+        .select("-route") // Exclude route for performance
+        .lean(),
       Session.countDocuments(filter),
     ]);
 
+    // ✅ FIX: Ensure pointCount and totalDistanceKm are populated
+    const enrichedSessions = sessions.map(session => ({
+      ...session,
+      pointCount: session.pointCount ?? 0,
+      totalDistanceKm: session.totalDistanceKm ?? 0,
+    }));
+
     res.status(200).json({
       success: true,
-      sessions,
+      sessions: enrichedSessions,
       pagination: {
         page,
         limit,
@@ -289,6 +306,7 @@ router.post("/start", async (req, res) => {
         latitude: lat,
         longitude: lng,
         timestamp: savedSession.startTime,
+        accuracy: 0,
       });
       console.log(
         `✅ Start point saved to Location for session ${savedSession._id}`,
@@ -334,6 +352,7 @@ router.post("/end", async (req, res) => {
               latitude: finalLocation.latitude,
               longitude: finalLocation.longitude,
               timestamp: new Date(),
+              accuracy: 0,
             });
             console.log("✅ Final location saved");
           }
@@ -426,20 +445,31 @@ router.get("/:sessionId", async (req, res) => {
       return res.status(404).json({ message: "Session not found" });
     }
 
-    if (session.status === "ACTIVE" || session.status === "AUTO_ENDED") {
+    // ✅ FIX: Always rebuild route for ACTIVE or AUTO_ENDED sessions
+    const shouldRebuild = 
+      session.status === "ACTIVE" || 
+      session.status === "AUTO_ENDED" ||
+      (session.route?.length === 0 && session.pointCount > 0);
+
+    if (shouldRebuild) {
+      console.log(`🔄 Rebuilding route for session ${sessionId}`);
       const rebuilt = await runExclusive(sessionId, async () => {
         return await rebuildSessionRoute(sessionId);
       });
       if (rebuilt) {
         session = rebuilt;
-        console.log(
-          `✅ Route rebuilt: ${session.route?.length || 0} points, ${session.totalDistanceKm}km`,
-        );
+        console.log(`✅ Route rebuilt: ${session.route?.length || 0} points, ${session.totalDistanceKm}km`);
       } else {
         console.log(`⚠️ No locations found for session ${sessionId}`);
+        // ✅ Even if no locations, ensure pointCount is correct
+        if (session.pointCount === 0 && session.route?.length > 0) {
+          session.pointCount = session.route.length;
+          await session.save();
+        }
       }
     }
 
+    // ✅ Auto-end if stale (24+ hours old)
     if (session.status === "ACTIVE") {
       const twentyFourHoursAgo = new Date();
       twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
@@ -450,11 +480,12 @@ router.get("/:sessionId", async (req, res) => {
       }
     }
 
+    // ✅ Paginate route if requested
     if (routePage) {
       const sessionObj = session.toObject();
       const start = (routePage - 1) * routeLimit;
-      const totalPoints = sessionObj.route.length;
-      sessionObj.route = sessionObj.route.slice(start, start + routeLimit);
+      const totalPoints = sessionObj.route?.length || 0;
+      sessionObj.route = sessionObj.route?.slice(start, start + routeLimit) || [];
       sessionObj.routePagination = {
         page: routePage,
         limit: routeLimit,
@@ -464,7 +495,17 @@ router.get("/:sessionId", async (req, res) => {
       return res.json(sessionObj);
     }
 
-    res.json(session);
+    // ✅ Ensure response always has route array
+    const response = session.toObject ? session.toObject() : session;
+    if (!response.route) response.route = [];
+    if (response.pointCount === undefined) {
+      response.pointCount = response.route.length;
+    }
+    if (response.totalDistanceKm === undefined) {
+      response.totalDistanceKm = 0;
+    }
+
+    res.json(response);
   } catch (err) {
     console.error("❌ Error fetching session:", err.message);
     res
@@ -473,9 +514,41 @@ router.get("/:sessionId", async (req, res) => {
   }
 });
 
+// ─── FIX OLD SESSIONS ENDPOINT ──────────────────────────────────────────
+router.post("/fix-sessions", async (req, res) => {
+  try {
+    const sessions = await Session.find({
+      pointCount: 0,
+      status: { $in: ["ENDED", "AUTO_ENDED"] }
+    });
+    
+    let fixed = 0;
+    for (const session of sessions) {
+      const count = session.route?.length || 0;
+      if (count > 0) {
+        await Session.findByIdAndUpdate(session._id, { 
+          pointCount: count,
+          totalDistanceKm: session.totalDistanceKm || 0
+        });
+        fixed++;
+        console.log(`✅ Fixed session ${session._id}: ${count} points`);
+      }
+    }
+    
+    res.json({ 
+      success: true, 
+      fixed, 
+      total: sessions.length,
+      message: `Fixed ${fixed} sessions with missing pointCount`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
 
-//------------- 28.8.26 --------------------------------
+//------------------- 31.08.2026 -------------------------
 // // sessionRoutes.js - COMPLETE FIXED VERSION
 
 // const express = require("express");
@@ -556,7 +629,6 @@ module.exports = router;
 // async function autoEndSessionIfStale(session) {
 //   if (!session || session.status !== "ACTIVE") return session;
 
-//   // ✅ FIX: Only auto-end if more than 24 hours old
 //   const twentyFourHoursAgo = new Date();
 //   twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
 
@@ -571,7 +643,6 @@ module.exports = router;
 //     const fresh = await Session.findById(session._id);
 //     if (!fresh || fresh.status !== "ACTIVE") return fresh || session;
 
-//     // ✅ Rebuild route before ending
 //     const rebuilt = await rebuildSessionRoute(session._id);
 //     const finalSession = rebuilt || fresh;
 
@@ -650,7 +721,7 @@ module.exports = router;
 //     const endOfDay = new Date();
 //     endOfDay.setHours(23, 59, 59, 999);
 
-//     const session = await Session.findOne({
+//     let session = await Session.findOne({
 //       userId,
 //       status: { $in: ["ACTIVE", "AUTO_ENDED"] },
 //       startTime: { $gte: startOfDay, $lte: endOfDay },
@@ -660,19 +731,10 @@ module.exports = router;
 //       return res.status(404).json({ message: "No active session today" });
 //     }
 
-//     // // ✅ Rebuild route before returning
-//     // if (session.status === 'ACTIVE' || session.status === 'AUTO_ENDED') {
-//     //   const rebuilt = await rebuildSessionRoute(session._id);
-//     //   if (rebuilt) {
-//     //     return res.json(rebuilt);
-//     //   }
-//     // }
-
-//     // Inside GET /:sessionId handler - 27-8-26:
 //     if (session.status === "ACTIVE" || session.status === "AUTO_ENDED") {
-//       // ✅ FIX: Lock during rebuild to prevent race with locationRoutes $inc
-//       const rebuilt = await runExclusive(sessionId, async () => {
-//         return await rebuildSessionRoute(sessionId);
+//       const sid = session._id.toString();
+//       const rebuilt = await runExclusive(sid, async () => {
+//         return await rebuildSessionRoute(sid);
 //       });
 //       if (rebuilt) session = rebuilt;
 //     }
@@ -704,8 +766,10 @@ module.exports = router;
 //       return res.status(404).json({ message: "No orphaned session found" });
 //     }
 
-//     // ✅ Rebuild route before returning
-//     const rebuilt = await rebuildSessionRoute(orphaned._id);
+//     const sid = orphaned._id.toString();
+//     const rebuilt = await runExclusive(sid, async () => {
+//       return await rebuildSessionRoute(sid);
+//     });
 //     res.json(rebuilt || orphaned);
 //   } catch (err) {
 //     console.log("❌ Error checking orphaned session:", err.message);
@@ -769,7 +833,6 @@ module.exports = router;
 //     const savedSession = await session.save();
 //     console.log(`✅ Session created - sessionId: ${savedSession._id}`);
 
-//     // ✅ Save start point to Location collection
 //     try {
 //       await Location.create({
 //         userId,
@@ -810,7 +873,6 @@ module.exports = router;
 //     console.log(`📤 Ending session: ${sessionId}`);
 
 //     const session = await runExclusive(sessionId, async () => {
-//       // ✅ Save final location if provided
 //       if (finalLocation && finalLocation.latitude && finalLocation.longitude) {
 //         try {
 //           const existing = await Session.findById(sessionId)
@@ -831,10 +893,8 @@ module.exports = router;
 //         }
 //       }
 
-//       // ✅ Rebuild route from Location collection
 //       const rebuilt = await rebuildSessionRoute(sessionId);
 //       if (rebuilt) {
-//         // Update status to ENDED
 //         const updated = await Session.findByIdAndUpdate(
 //           sessionId,
 //           {
@@ -846,7 +906,6 @@ module.exports = router;
 //         return updated;
 //       }
 
-//       // Fallback if rebuild fails
 //       const updated = await Session.findByIdAndUpdate(
 //         sessionId,
 //         {
@@ -880,7 +939,9 @@ module.exports = router;
 //     const { sessionId } = req.params;
 //     console.log(`🔄 Manually rebuilding route for ${sessionId}`);
 
-//     const rebuilt = await rebuildSessionRoute(sessionId);
+//     const rebuilt = await runExclusive(sessionId, async () => {
+//       return await rebuildSessionRoute(sessionId);
+//     });
 
 //     if (rebuilt) {
 //       res.json({
@@ -916,12 +977,10 @@ module.exports = router;
 //       return res.status(404).json({ message: "Session not found" });
 //     }
 
-//     // ✅ ALWAYS rebuild route for ACTIVE sessions
 //     if (session.status === "ACTIVE" || session.status === "AUTO_ENDED") {
-//       console.log(
-//         `🔄 Rebuilding route for session ${sessionId} (status: ${session.status})`,
-//       );
-//       const rebuilt = await rebuildSessionRoute(sessionId);
+//       const rebuilt = await runExclusive(sessionId, async () => {
+//         return await rebuildSessionRoute(sessionId);
+//       });
 //       if (rebuilt) {
 //         session = rebuilt;
 //         console.log(
@@ -932,7 +991,6 @@ module.exports = router;
 //       }
 //     }
 
-//     // ✅ Auto-end if stale (but only if > 24 hours old)
 //     if (session.status === "ACTIVE") {
 //       const twentyFourHoursAgo = new Date();
 //       twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
@@ -943,7 +1001,6 @@ module.exports = router;
 //       }
 //     }
 
-//     // ✅ Paginate route if requested
 //     if (routePage) {
 //       const sessionObj = session.toObject();
 //       const start = (routePage - 1) * routeLimit;
@@ -968,3 +1025,4 @@ module.exports = router;
 // });
 
 // module.exports = router;
+
