@@ -1,5 +1,4 @@
 // sessionRoutes.js - COMPLETE FIXED VERSION
-// Fixes: Session auto-end prevention, proper status checking
 
 const express = require("express");
 const router = express.Router();
@@ -75,26 +74,19 @@ async function rebuildSessionRoute(sessionId) {
   }
 }
 
-// ✅ FIX: Auto-end only for sessions older than 30 minutes
+// ─── Auto-end stale sessions ────────────────────────────────────────────
 async function autoEndSessionIfStale(session) {
   if (!session || session.status !== "ACTIVE") return session;
 
-  const thirtyMinutesAgo = new Date();
-  thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 30);
+  const twentyFourHoursAgo = new Date();
+  twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
 
-  // ✅ FIX: Don't auto-end sessions less than 30 minutes old
-  if (session.startTime > thirtyMinutesAgo) {
-    console.log(`✅ Session ${session._id} is recent (< 30 mins), keeping active`);
+  if (session.startTime > twentyFourHoursAgo) {
+    console.log(`✅ Session ${session._id} is recent, keeping active`);
     return session;
   }
 
-  // ✅ FIX: Only auto-end if from previous day
-  if (!isFromPreviousDay(session.startTime)) {
-    console.log(`✅ Session ${session._id} is from today, keeping active`);
-    return session;
-  }
-
-  console.log(`⏰ Session ${session._id} is stale (> 30 mins and from previous day), auto-ending`);
+  if (!isFromPreviousDay(session.startTime)) return session;
 
   return runExclusive(session._id, async () => {
     const fresh = await Session.findById(session._id);
@@ -114,10 +106,9 @@ async function autoEndSessionIfStale(session) {
 
 async function cleanupStaleSessions() {
   try {
-    const startOfDay = getStartOfToday();
     const staleSessions = await Session.find({
       status: "ACTIVE",
-      startTime: { $lt: startOfDay },
+      startTime: { $lt: getStartOfToday() },
     });
 
     for (const session of staleSessions) {
@@ -189,16 +180,6 @@ router.get("/today/:userId", async (req, res) => {
       return res.status(404).json({ message: "No active session today" });
     }
 
-    // ✅ FIX: Check if session should be auto-ended (but only if > 30 mins)
-    if (session.status === "ACTIVE") {
-      const thirtyMinutesAgo = new Date();
-      thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 30);
-      
-      if (session.startTime < thirtyMinutesAgo && isFromPreviousDay(session.startTime)) {
-        session = await autoEndSessionIfStale(session);
-      }
-    }
-
     if (session.status === "ACTIVE" || session.status === "AUTO_ENDED") {
       const sid = session._id.toString();
       const rebuilt = await runExclusive(sid, async () => {
@@ -224,11 +205,10 @@ router.get("/orphaned/:userId", async (req, res) => {
       return res.status(400).json({ message: "userId is required" });
     }
 
-    const startOfDay = getStartOfToday();
     const orphaned = await Session.findOne({
       userId,
       status: "ACTIVE",
-      startTime: { $lt: startOfDay },
+      startTime: { $lt: getStartOfToday() },
     });
 
     if (!orphaned) {
@@ -446,21 +426,7 @@ router.get("/:sessionId", async (req, res) => {
       return res.status(404).json({ message: "Session not found" });
     }
 
-    // ✅ FIX: Auto-end check with 30 minute threshold
-    if (session.status === "ACTIVE") {
-      const thirtyMinutesAgo = new Date();
-      thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 30);
-      
-      if (session.startTime < thirtyMinutesAgo && isFromPreviousDay(session.startTime)) {
-        console.log(`⏰ Session ${sessionId} is stale, auto-ending`);
-        session = await autoEndSessionIfStale(session);
-      }
-    }
-
     if (session.status === "ACTIVE" || session.status === "AUTO_ENDED") {
-      console.log(
-        `🔄 Rebuilding route for session ${sessionId} (status: ${session.status})`,
-      );
       const rebuilt = await runExclusive(sessionId, async () => {
         return await rebuildSessionRoute(sessionId);
       });
@@ -469,6 +435,18 @@ router.get("/:sessionId", async (req, res) => {
         console.log(
           `✅ Route rebuilt: ${session.route?.length || 0} points, ${session.totalDistanceKm}km`,
         );
+      } else {
+        console.log(`⚠️ No locations found for session ${sessionId}`);
+      }
+    }
+
+    if (session.status === "ACTIVE") {
+      const twentyFourHoursAgo = new Date();
+      twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+      if (session.startTime < twentyFourHoursAgo) {
+        console.log(`⏰ Session ${sessionId} is > 24 hours old, auto-ending`);
+        session = await autoEndSessionIfStale(session);
       }
     }
 
@@ -497,7 +475,7 @@ router.get("/:sessionId", async (req, res) => {
 
 module.exports = router;
 
-//---------------- 31.08.2026 -------------------------------
+//------------- 28.8.26 --------------------------------
 // // sessionRoutes.js - COMPLETE FIXED VERSION
 
 // const express = require("express");
@@ -578,6 +556,7 @@ module.exports = router;
 // async function autoEndSessionIfStale(session) {
 //   if (!session || session.status !== "ACTIVE") return session;
 
+//   // ✅ FIX: Only auto-end if more than 24 hours old
 //   const twentyFourHoursAgo = new Date();
 //   twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
 
@@ -592,6 +571,7 @@ module.exports = router;
 //     const fresh = await Session.findById(session._id);
 //     if (!fresh || fresh.status !== "ACTIVE") return fresh || session;
 
+//     // ✅ Rebuild route before ending
 //     const rebuilt = await rebuildSessionRoute(session._id);
 //     const finalSession = rebuilt || fresh;
 
@@ -670,7 +650,7 @@ module.exports = router;
 //     const endOfDay = new Date();
 //     endOfDay.setHours(23, 59, 59, 999);
 
-//     let session = await Session.findOne({
+//     const session = await Session.findOne({
 //       userId,
 //       status: { $in: ["ACTIVE", "AUTO_ENDED"] },
 //       startTime: { $gte: startOfDay, $lte: endOfDay },
@@ -680,10 +660,19 @@ module.exports = router;
 //       return res.status(404).json({ message: "No active session today" });
 //     }
 
+//     // // ✅ Rebuild route before returning
+//     // if (session.status === 'ACTIVE' || session.status === 'AUTO_ENDED') {
+//     //   const rebuilt = await rebuildSessionRoute(session._id);
+//     //   if (rebuilt) {
+//     //     return res.json(rebuilt);
+//     //   }
+//     // }
+
+//     // Inside GET /:sessionId handler - 27-8-26:
 //     if (session.status === "ACTIVE" || session.status === "AUTO_ENDED") {
-//       const sid = session._id.toString();
-//       const rebuilt = await runExclusive(sid, async () => {
-//         return await rebuildSessionRoute(sid);
+//       // ✅ FIX: Lock during rebuild to prevent race with locationRoutes $inc
+//       const rebuilt = await runExclusive(sessionId, async () => {
+//         return await rebuildSessionRoute(sessionId);
 //       });
 //       if (rebuilt) session = rebuilt;
 //     }
@@ -715,10 +704,8 @@ module.exports = router;
 //       return res.status(404).json({ message: "No orphaned session found" });
 //     }
 
-//     const sid = orphaned._id.toString();
-//     const rebuilt = await runExclusive(sid, async () => {
-//       return await rebuildSessionRoute(sid);
-//     });
+//     // ✅ Rebuild route before returning
+//     const rebuilt = await rebuildSessionRoute(orphaned._id);
 //     res.json(rebuilt || orphaned);
 //   } catch (err) {
 //     console.log("❌ Error checking orphaned session:", err.message);
@@ -782,6 +769,7 @@ module.exports = router;
 //     const savedSession = await session.save();
 //     console.log(`✅ Session created - sessionId: ${savedSession._id}`);
 
+//     // ✅ Save start point to Location collection
 //     try {
 //       await Location.create({
 //         userId,
@@ -822,6 +810,7 @@ module.exports = router;
 //     console.log(`📤 Ending session: ${sessionId}`);
 
 //     const session = await runExclusive(sessionId, async () => {
+//       // ✅ Save final location if provided
 //       if (finalLocation && finalLocation.latitude && finalLocation.longitude) {
 //         try {
 //           const existing = await Session.findById(sessionId)
@@ -842,8 +831,10 @@ module.exports = router;
 //         }
 //       }
 
+//       // ✅ Rebuild route from Location collection
 //       const rebuilt = await rebuildSessionRoute(sessionId);
 //       if (rebuilt) {
+//         // Update status to ENDED
 //         const updated = await Session.findByIdAndUpdate(
 //           sessionId,
 //           {
@@ -855,6 +846,7 @@ module.exports = router;
 //         return updated;
 //       }
 
+//       // Fallback if rebuild fails
 //       const updated = await Session.findByIdAndUpdate(
 //         sessionId,
 //         {
@@ -888,9 +880,7 @@ module.exports = router;
 //     const { sessionId } = req.params;
 //     console.log(`🔄 Manually rebuilding route for ${sessionId}`);
 
-//     const rebuilt = await runExclusive(sessionId, async () => {
-//       return await rebuildSessionRoute(sessionId);
-//     });
+//     const rebuilt = await rebuildSessionRoute(sessionId);
 
 //     if (rebuilt) {
 //       res.json({
@@ -926,10 +916,12 @@ module.exports = router;
 //       return res.status(404).json({ message: "Session not found" });
 //     }
 
+//     // ✅ ALWAYS rebuild route for ACTIVE sessions
 //     if (session.status === "ACTIVE" || session.status === "AUTO_ENDED") {
-//       const rebuilt = await runExclusive(sessionId, async () => {
-//         return await rebuildSessionRoute(sessionId);
-//       });
+//       console.log(
+//         `🔄 Rebuilding route for session ${sessionId} (status: ${session.status})`,
+//       );
+//       const rebuilt = await rebuildSessionRoute(sessionId);
 //       if (rebuilt) {
 //         session = rebuilt;
 //         console.log(
@@ -940,6 +932,7 @@ module.exports = router;
 //       }
 //     }
 
+//     // ✅ Auto-end if stale (but only if > 24 hours old)
 //     if (session.status === "ACTIVE") {
 //       const twentyFourHoursAgo = new Date();
 //       twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
@@ -950,6 +943,7 @@ module.exports = router;
 //       }
 //     }
 
+//     // ✅ Paginate route if requested
 //     if (routePage) {
 //       const sessionObj = session.toObject();
 //       const start = (routePage - 1) * routeLimit;
