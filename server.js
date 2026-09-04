@@ -9,6 +9,7 @@ const http = require("http");
 const socketIo = require("socket.io");
 const Session = require("./models/FSEModel/Session");
 const Location = require("./models/LocationModel/Location");
+const salespersonRoutes = require("./routes/salespersonRoutes");
 const dns = require("dns");
 const cors = require("cors");
 
@@ -80,6 +81,7 @@ app.use("/api/sales-returns", require("./routes/salesReturnRoutes"));
 app.use("/api/purchase-returns", require("./routes/purchaseReturnRoutes"));
 app.use("/api/suppliers", require("./routes/supplierRoutes"));
 app.use("/api/purchases", require("./routes/purchaseRoutes"));
+app.use("/api/salespersons", require("./routes/salespersonRoutes"));
 console.log("✅ All routes registered");
 
 const startAutoEndJob = require("./cron/autoEndDay");
