@@ -162,13 +162,12 @@ async function processLocationPoint({ userId, sessionId, latitude, longitude, ac
 
   if (session.status !== 'ACTIVE') {
     console.warn(`⚠️ Session ${sessionId} is not active (status: ${session.status})`);
-    
+
     if (session.status === 'AUTO_ENDED') {
       console.log(`🔄 Attempting to reactivate AUTO_ENDED session ${sessionId}`);
-      const now = new Date();
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
-      
+
       if (session.startTime >= startOfDay) {
         console.log(`✅ Reactivating session ${sessionId}`);
         session.status = 'ACTIVE';
@@ -177,6 +176,34 @@ async function processLocationPoint({ userId, sessionId, latitude, longitude, ac
       } else {
         return { status: 400, body: { message: 'Session is from previous day' } };
       }
+    } else if (session.status === 'ENDED') {
+      // ✅ FIX: LATE-ARRIVING OFFLINE POINTS
+      //
+      // The app queues GPS points on-device (AsyncStorage @fse_offline_queue)
+      // whenever a POST fails (no signal, timeout, etc.) and retries them
+      // later — including via the "Skip Sync & End Day" button, which
+      // explicitly ends the session *before* every queued point has been
+      // confirmed sent, promising the user "will be synced automatically
+      // when you reconnect."
+      //
+      // Previously, once a session hit ENDED (only AUTO_ENDED sessions were
+      // ever let back in above), every one of those late points was
+      // permanently rejected here with 400 "Session is not active" — so
+      // that promise was never actually kept and the point was lost.
+      //
+      // Accept late points for a session that ended within the last 48h
+      // and APPEND them (update distance/pointCount/route) WITHOUT
+      // flipping status back to ACTIVE or clearing endTime — the day stays
+      // closed/locked from the user's point of view, it just doesn't
+      // silently discard historical GPS data that shows up late.
+      const LATE_SYNC_GRACE_MS = 48 * 60 * 60 * 1000;
+      const endedAt = session.endTime ? new Date(session.endTime) : null;
+      const withinGrace = endedAt && (Date.now() - endedAt.getTime()) <= LATE_SYNC_GRACE_MS;
+
+      if (!withinGrace) {
+        return { status: 400, body: { message: 'Session ended too long ago to accept late points' } };
+      }
+      console.log(`🕒 Accepting late point for ENDED session ${sessionId} (within ${LATE_SYNC_GRACE_MS / 3600000}h grace window)`);
     } else {
       return { status: 400, body: { message: 'Session is not active' } };
     }
@@ -591,7 +618,7 @@ function isFromPreviousDay(date) {
 
 module.exports = router;
 
-//------------- 02.09.2026 -----------------------
+//----------------- 09-09-2026 -----------------------
 // const express = require("express");
 // const router = express.Router();
 // const Location = require("../models/LocationModel/Location");
@@ -828,13 +855,28 @@ module.exports = router;
 //     });
 //   } catch (err) {
 //     if (err.code === 11000) {
-//       console.log(`📌 Duplicate location detected for session ${sessionId}, skipping save`);
+//       // ⚠️ This means a UNIQUE index rejected the insert. Our schema
+//       // (models/LocationModel/Location.js) does NOT declare any unique
+//       // index — if this fires, there is a stale unique index left over
+//       // on the live MongoDB collection from an older schema version.
+//       // Mongoose does not drop indexes automatically when you remove
+//       // `unique: true` from the schema, so that old index silently
+//       // rejects every insert here forever, while this code was treating
+//       // it as a harmless "duplicate point" and reporting success to the
+//       // app — meaning NOTHING was actually being saved.
+//       console.error(
+//         `🚨 E11000 duplicate key on Location.create for session ${sessionId}. ` +
+//         `This should be impossible with the current schema — check for a ` +
+//         `stale unique index: run db.locations.getIndexes() in mongosh and ` +
+//         `drop any index with unique:true. keyPattern=${JSON.stringify(err.keyPattern)} keyValue=${JSON.stringify(err.keyValue)}`
+//       );
 //       return {
 //         status: 200,
 //         body: {
 //           success: true,
 //           skipped: true,
 //           reason: 'duplicate_key',
+//           warning: 'Point was rejected by a database unique index and NOT saved. Check server logs / db indexes.',
 //           totalDistance: session.totalDistanceKm || 0,
 //           pointCount: session.pointCount || 0,
 //         },
