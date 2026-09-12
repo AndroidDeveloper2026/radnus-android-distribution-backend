@@ -184,6 +184,21 @@ exports.register = async (req, res) => {
 
   } catch (error) {
     console.error(error);
+
+    // ⭐ FIX: a duplicate mobile/email hitting the unique index (e.g. two
+    // near-simultaneous submits racing past the earlier existingUser
+    // check) used to fall through to a generic 500 "Server error" —
+    // confusing, since the FIRST request usually already succeeded and
+    // the user already has a valid account + OTP in hand. Report this
+    // as the same 409 the explicit pre-check uses, so the client can
+    // recognize "you're already registered" instead of "something broke".
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern || {})[0] || "field";
+      return res.status(409).json({
+        message: `This ${field} is already registered.`,
+      });
+    }
+
     res.status(500).json({ message: "Server error" });
   }
 };
