@@ -14,6 +14,13 @@ const DUPLICATE_DISTANCE_METERS = 10;  // ✅ INCREASED FROM 1 TO 10 METERS
 
 const kmToMeters = km => km * 1000;
 const { runExclusive } = require("../utils/sessionLock");
+const mongoose = require("mongoose");
+const {
+  requireTrackedRole,
+  requireAdmin,
+  requireSessionAccess,
+} = require("../middleware/hierarchyAccess");
+const { broadcastToSuperiors } = require("../utils/teamSocket");
 
 // ── Route rebuild helper ──────────────────────────────────────────────
 async function rebuildSessionRoute(sessionId) {
@@ -124,7 +131,8 @@ function broadcastAcceptedPoint(req, { sessionId, userId, latitude, longitude, t
   };
   try {
     req.io.to(`session-${sessionId}`).emit('session-location', payload);
-    req.io.emit('users-location', payload);
+    // Only Admin + this user's superiors receive it (was: every connected client).
+    broadcastToSuperiors(req.io, userId, payload).catch(() => {});
     return true;
   } catch (e) { return false; }
 }
@@ -365,14 +373,23 @@ async function processLocationPoint({ userId, sessionId, latitude, longitude, ac
 }
 
 // ─── UPDATE LOCATION ENDPOINT ──────────────────────────────────────────
-router.post("/update", async (req, res) => {
+router.post("/update", requireTrackedRole, async (req, res) => {
   try {
-    const { userId, sessionId, latitude, longitude, timestamp, accuracy } = req.body;
+    const { sessionId, latitude, longitude, timestamp, accuracy } = req.body;
+    const userId = String(req.user.id); // taken from the token, not the body
 
     if (!userId || !sessionId || latitude === undefined || longitude === undefined) {
       return res.status(400).json({
         message: "Missing required fields",
         required: ['userId', 'sessionId', 'latitude', 'longitude']
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(String(sessionId)) ||
+        !(await Session.exists({ _id: sessionId, userId }))) {
+      return res.status(403).json({
+        message: "Session does not belong to this user",
+        permanent: true,
       });
     }
 
@@ -583,7 +600,7 @@ async function processLocationBatchForSession(sessionId, pointsForSession) {
 }
 
 // ─── BATCH SYNC ENDPOINT ────────────────────────────────────────────────
-router.post("/batch-sync", async (req, res) => {
+router.post("/batch-sync", requireTrackedRole, async (req, res) => {
   try {
     const { points } = req.body;
     if (!Array.isArray(points) || points.length === 0) {
@@ -593,8 +610,32 @@ router.post("/batch-sync", async (req, res) => {
     // Batches from the app are per-session in practice, but group
     // defensively in case a caller ever mixes sessions — each session's
     // points still get processed as a single unit under its own lock.
+    // Ownership: every point is forced to the caller's userId and must belong
+    // to one of the caller's own sessions. Others are rejected as permanent.
+    const myId = String(req.user.id);
+    const candidateIds = [
+      ...new Set(
+        points
+          .map((p) => String(p.sessionId))
+          .filter((id) => mongoose.Types.ObjectId.isValid(id)),
+      ),
+    ];
+    const ownedSessionIds = new Set(
+      (
+        await Session.find({ _id: { $in: candidateIds }, userId: myId })
+          .select("_id")
+          .lean()
+      ).map((s) => String(s._id)),
+    );
+    const rejected = [];
+
     const bySession = new Map();
     points.forEach((point, index) => {
+      if (!ownedSessionIds.has(String(point.sessionId))) {
+        rejected.push(index);
+        return;
+      }
+      point.userId = myId;
       const key = String(point.sessionId);
       if (!bySession.has(key)) bySession.set(key, []);
       bySession.get(key).push({ ...point, __index: index });
@@ -603,6 +644,13 @@ router.post("/batch-sync", async (req, res) => {
     console.log(`📦 Batch sync: ${points.length} points across ${bySession.size} session(s)`);
 
     const results = new Array(points.length);
+    rejected.forEach((i) => {
+      results[i] = {
+        success: false,
+        permanent: true,
+        message: "Session does not belong to this user",
+      };
+    });
 
     await Promise.all(
       Array.from(bySession.entries()).map(([sessionId, sessionPoints]) =>
@@ -622,6 +670,32 @@ router.post("/batch-sync", async (req, res) => {
       )
     );
 
+    // Live view for superiors: one broadcast per session (latest fresh point only).
+    try {
+      for (const [sid, pts] of bySession.entries()) {
+        const accepted = pts.filter(
+          (p) => results[p.__index] && results[p.__index].success !== false && !results[p.__index].skipped,
+        );
+        if (!accepted.length) continue;
+        const last = accepted.reduce((a, b) =>
+          new Date(b.timestamp) > new Date(a.timestamp) ? b : a,
+        );
+        if (Date.now() - new Date(last.timestamp).getTime() > 2 * 60 * 1000) continue; // late sync, not live
+        const s = await Session.findById(sid).select("totalDistanceKm pointCount").lean();
+        broadcastAcceptedPoint(req, {
+          sessionId: sid,
+          userId: myId,
+          latitude: last.latitude,
+          longitude: last.longitude,
+          timestamp: last.timestamp,
+          totalDistance: s ? s.totalDistanceKm : 0,
+          pointCount: s ? s.pointCount : 0,
+        });
+      }
+    } catch (e) {
+      console.error("⚠️ team broadcast failed:", e.message);
+    }
+
     const successCount = results.filter(r => r?.success !== false).length;
     console.log(`✅ Batch sync complete: ${successCount}/${points.length} points processed`);
 
@@ -638,7 +712,7 @@ router.post("/batch-sync", async (req, res) => {
 });
 
 // ─── GET SESSION WITH ROUTE ─────────────────────────────────────────────
-router.get("/session/:sessionId", async (req, res) => {
+router.get("/session/:sessionId", requireSessionAccess(), async (req, res) => {
   try {
     const { sessionId } = req.params;
     const routePage = parseInt(req.query.routePage, 10) || null;
@@ -700,7 +774,7 @@ router.get("/session/:sessionId", async (req, res) => {
 });
 
 // ─── GET ALL LOCATIONS FOR SESSION ──────────────────────────────────────
-router.get("/locations/:sessionId", async (req, res) => {
+router.get("/locations/:sessionId", requireSessionAccess(), async (req, res) => {
   try {
     const { sessionId } = req.params;
     const page = parseInt(req.query.page, 10) || 1;
@@ -731,7 +805,7 @@ router.get("/locations/:sessionId", async (req, res) => {
 });
 
 // ─── DEBUG ENDPOINT ────────────────────────────────────────────────────
-router.get("/debug/:sessionId", async (req, res) => {
+router.get("/debug/:sessionId", requireAdmin, async (req, res) => {
   try {
     const { sessionId } = req.params;
     
@@ -807,7 +881,7 @@ function isFromPreviousDay(date) {
 
 module.exports = router;
 
-//----------------- 09-09-2026 -----------------------
+//------------------ 05.10.26 Backup ---------------
 // const express = require("express");
 // const router = express.Router();
 // const Location = require("../models/LocationModel/Location");
@@ -939,6 +1013,65 @@ module.exports = router;
 //   } catch (e) { return false; }
 // }
 
+// // ── Shared session-availability check (used by both the single-point and
+// // batch ingest paths so their behavior can never drift apart) ───────────
+// // Mutates + saves `session` in place if it reactivates an AUTO_ENDED
+// // session. Returns { ok: true } to proceed, or { ok: false, status, body }
+// // to reject every point destined for this session.
+// async function ensureSessionAvailableForIngest(session, sessionId) {
+//   if (session.status === 'ACTIVE') return { ok: true };
+
+//   console.warn(`⚠️ Session ${sessionId} is not active (status: ${session.status})`);
+
+//   if (session.status === 'AUTO_ENDED') {
+//     console.log(`🔄 Attempting to reactivate AUTO_ENDED session ${sessionId}`);
+//     const startOfDay = new Date();
+//     startOfDay.setHours(0, 0, 0, 0);
+
+//     if (session.startTime >= startOfDay) {
+//       console.log(`✅ Reactivating session ${sessionId}`);
+//       session.status = 'ACTIVE';
+//       session.endTime = undefined;
+//       await session.save();
+//       return { ok: true };
+//     }
+//     return { ok: false, status: 400, body: { message: 'Session is from previous day' } };
+//   }
+
+//   if (session.status === 'ENDED') {
+//     // ✅ FIX: LATE-ARRIVING OFFLINE POINTS
+//     //
+//     // The app queues GPS points on-device (AsyncStorage @fse_offline_queue)
+//     // whenever a POST fails (no signal, timeout, etc.) and retries them
+//     // later — including via the "Skip Sync & End Day" button, which
+//     // explicitly ends the session *before* every queued point has been
+//     // confirmed sent, promising the user "will be synced automatically
+//     // when you reconnect."
+//     //
+//     // Previously, once a session hit ENDED (only AUTO_ENDED sessions were
+//     // ever let back in above), every one of those late points was
+//     // permanently rejected here with 400 "Session is not active" — so
+//     // that promise was never actually kept and the point was lost.
+//     //
+//     // Accept late points for a session that ended within the last 48h
+//     // and APPEND them (update distance/pointCount/route) WITHOUT
+//     // flipping status back to ACTIVE or clearing endTime — the day stays
+//     // closed/locked from the user's point of view, it just doesn't
+//     // silently discard historical GPS data that shows up late.
+//     const LATE_SYNC_GRACE_MS = 48 * 60 * 60 * 1000;
+//     const endedAt = session.endTime ? new Date(session.endTime) : null;
+//     const withinGrace = endedAt && (Date.now() - endedAt.getTime()) <= LATE_SYNC_GRACE_MS;
+
+//     if (!withinGrace) {
+//       return { ok: false, status: 400, body: { message: 'Session ended too long ago to accept late points' } };
+//     }
+//     console.log(`🕒 Accepting late point for ENDED session ${sessionId} (within ${LATE_SYNC_GRACE_MS / 3600000}h grace window)`);
+//     return { ok: true };
+//   }
+
+//   return { ok: false, status: 400, body: { message: 'Session is not active' } };
+// }
+
 // // ── Core point-processing logic ──────────────────────────────────────────
 // async function processLocationPoint({ userId, sessionId, latitude, longitude, accuracy, timestamp }) {
 //   if (!userId || !sessionId || latitude === undefined || longitude === undefined) {
@@ -970,26 +1103,9 @@ module.exports = router;
 //     return { status: 404, body: { message: 'Session not found' } };
 //   }
 
-//   if (session.status !== 'ACTIVE') {
-//     console.warn(`⚠️ Session ${sessionId} is not active (status: ${session.status})`);
-    
-//     if (session.status === 'AUTO_ENDED') {
-//       console.log(`🔄 Attempting to reactivate AUTO_ENDED session ${sessionId}`);
-//       const now = new Date();
-//       const startOfDay = new Date();
-//       startOfDay.setHours(0, 0, 0, 0);
-      
-//       if (session.startTime >= startOfDay) {
-//         console.log(`✅ Reactivating session ${sessionId}`);
-//         session.status = 'ACTIVE';
-//         session.endTime = undefined;
-//         await session.save();
-//       } else {
-//         return { status: 400, body: { message: 'Session is from previous day' } };
-//       }
-//     } else {
-//       return { status: 400, body: { message: 'Session is not active' } };
-//     }
+//   const availability = await ensureSessionAvailableForIngest(session, sessionId);
+//   if (!availability.ok) {
+//     return { status: availability.status, body: availability.body };
 //   }
 
 //   const lastRoutePoint = session.route.length > 0
@@ -1182,6 +1298,174 @@ module.exports = router;
 //   }
 // });
 
+// // ── Batch ingest for a single session's points ───────────────────────────
+// // Runs entirely under one runExclusive(sessionId) lock and does at most:
+// //   1 Session.findById, 1 Location.insertMany, 1 Session update, 1 rebuild
+// // regardless of how many points are in the batch (previously this was
+// // 2-4 sequential DB round trips PER POINT, plus a full-collection
+// // find+sort "rebuild" every 5th point — for a 100-point batch that meant
+// // ~250 round trips before the app's 15s timeout fired, which is exactly
+// // the "Sync Issue / Unable to sync all points" failure in the End Day
+// // screen. Batching the DB work fixes that regardless of batch size.
+// async function processLocationBatchForSession(sessionId, pointsForSession) {
+//   // pointsForSession: [{ __index, userId, sessionId, latitude, longitude, accuracy, timestamp }]
+//   const results = new Array(pointsForSession.length);
+
+//   // 1. Validate shape up front; keep only well-formed points for DB work.
+//   const valid = [];
+//   pointsForSession.forEach((p, i) => {
+//     const lat = parseFloat(p.latitude);
+//     const lng = parseFloat(p.longitude);
+//     if (!p.userId || !p.sessionId || p.latitude === undefined || p.longitude === undefined) {
+//       results[i] = { success: false, message: 'Missing required fields' };
+//       return;
+//     }
+//     if (isNaN(lat) || isNaN(lng)) {
+//       results[i] = { success: false, message: 'Invalid coordinates' };
+//       return;
+//     }
+//     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+//       results[i] = { success: false, message: 'Coordinates out of range' };
+//       return;
+//     }
+//     valid.push({ ...p, lat, lng, ts: new Date(p.timestamp || Date.now()) });
+//   });
+
+//   if (valid.length === 0) return results;
+
+//   // 2. One session fetch + one availability check for the whole batch.
+//   const session = await Session.findById(sessionId);
+//   if (!session) {
+//     valid.forEach(p => { results[p.__index] = { success: false, message: 'Session not found' }; });
+//     return results;
+//   }
+
+//   const availability = await ensureSessionAvailableForIngest(session, sessionId);
+//   if (!availability.ok) {
+//     valid.forEach(p => { results[p.__index] = { success: false, message: availability.body.message }; });
+//     return results;
+//   }
+
+//   // 3. Sort chronologically and run the duplicate/GPS-jump filters
+//   // in-memory against a running "last accepted point" cursor, seeded
+//   // from the session's current last route point — mirrors the
+//   // single-point path exactly, just without a DB round trip per point.
+//   valid.sort((a, b) => a.ts - b.ts);
+
+//   let lastPoint = session.route.length > 0
+//     ? session.route[session.route.length - 1]
+//     : session.startLocation
+//       ? { latitude: session.startLocation.latitude, longitude: session.startLocation.longitude, timestamp: session.startTime }
+//       : null;
+
+//   const toInsert = [];
+//   let distanceIncrement = 0;
+
+//   for (const p of valid) {
+//     if (lastPoint && isDuplicatePoint(lastPoint, p.lat, p.lng, p.ts)) {
+//       results[p.__index] = { success: true, skipped: true, reason: 'duplicate' };
+//       continue;
+//     }
+//     if (lastPoint) {
+//       const jumpCheck = isImpossibleJump(lastPoint, p.lat, p.lng, p.ts);
+//       if (jumpCheck.reject) {
+//         results[p.__index] = { success: true, skipped: true, reason: jumpCheck.reason };
+//         continue;
+//       }
+//     }
+
+//     let stepDistance = 0;
+//     if (lastPoint) {
+//       stepDistance = calculateDistance(lastPoint.latitude, lastPoint.longitude, p.lat, p.lng);
+//       if (stepDistance <= 0.0001) stepDistance = 0;
+//     }
+//     distanceIncrement += stepDistance;
+
+//     toInsert.push({
+//       userId: p.userId,
+//       sessionId: p.sessionId,
+//       latitude: p.lat,
+//       longitude: p.lng,
+//       timestamp: p.ts,
+//       accuracy: parseFloat(p.accuracy) || 0,
+//       __index: p.__index,
+//     });
+//     lastPoint = { latitude: p.lat, longitude: p.lng, timestamp: p.ts };
+//   }
+
+//   if (toInsert.length === 0) return results;
+
+//   // 4. One bulk insert. ordered:false so one bad document (e.g. a stale
+//   // unique index somewhere) can't sink the whole accepted set — points
+//   // that do fail insert are reported individually and stay queued for
+//   // retry instead of being wrongly marked as saved.
+//   let insertedIndexes = new Set(toInsert.map(d => d.__index));
+//   try {
+//     await Location.insertMany(
+//       toInsert.map(({ __index, ...doc }) => doc),
+//       { ordered: false }
+//     );
+//   } catch (bulkErr) {
+//     if (Array.isArray(bulkErr.writeErrors)) {
+//       // insertMany with ordered:false throws a BulkWriteError that still
+//       // tells us which documents succeeded vs failed.
+//       const failedIdxSet = new Set(bulkErr.writeErrors.map(we => we.index));
+//       insertedIndexes = new Set(
+//         toInsert.filter((_, i) => !failedIdxSet.has(i)).map(d => d.__index)
+//       );
+//       toInsert.forEach((d, i) => {
+//         if (failedIdxSet.has(i)) {
+//           console.error(`❌ Failed to insert location point (session ${sessionId}):`, bulkErr.writeErrors.find(we => we.index === i)?.errmsg);
+//           results[d.__index] = { success: false, message: 'Database insert failed' };
+//         }
+//       });
+//     } else {
+//       // Total failure (e.g. connection dropped) with no per-document
+//       // detail — assume NOTHING was saved rather than defaulting to
+//       // success, so these points stay queued for retry.
+//       console.error(`❌ insertMany failed entirely for session ${sessionId}:`, bulkErr.message);
+//       insertedIndexes = new Set();
+//       toInsert.forEach(d => {
+//         results[d.__index] = { success: false, message: 'Database insert failed' };
+//       });
+//     }
+//   }
+
+//   const actuallyInsertedCount = insertedIndexes.size;
+//   if (actuallyInsertedCount === 0) return results;
+
+//   // 5. One session update for the whole batch (not one per point).
+//   const updatedSession = await Session.findByIdAndUpdate(
+//     sessionId,
+//     { $inc: { totalDistanceKm: parseFloat(distanceIncrement.toFixed(6)), pointCount: actuallyInsertedCount } },
+//     { new: true }
+//   );
+
+//   // 6. One rebuild for the whole batch (not one per 5 points) so the
+//   // session's `route` array and rounded totalDistanceKm stay consistent
+//   // with what's actually in the Location collection.
+//   const rebuilt = await rebuildSessionRoute(sessionId);
+//   const finalSession = rebuilt || updatedSession;
+//   const roundedTotal = parseFloat((finalSession.totalDistanceKm || 0).toFixed(4));
+//   if (roundedTotal !== finalSession.totalDistanceKm) {
+//     await Session.findByIdAndUpdate(sessionId, { totalDistanceKm: roundedTotal });
+//   }
+
+//   console.log(`✅ Batch for session ${sessionId}: ${actuallyInsertedCount}/${valid.length} points saved, ${roundedTotal.toFixed(4)}km total`);
+
+//   toInsert.forEach(d => {
+//     if (insertedIndexes.has(d.__index)) {
+//       results[d.__index] = {
+//         success: true,
+//         totalDistance: roundedTotal,
+//         pointCount: finalSession.pointCount,
+//       };
+//     }
+//   });
+
+//   return results;
+// }
+
 // // ─── BATCH SYNC ENDPOINT ────────────────────────────────────────────────
 // router.post("/batch-sync", async (req, res) => {
 //   try {
@@ -1190,34 +1474,40 @@ module.exports = router;
 //       return res.status(400).json({ message: "points array is required" });
 //     }
 
-//     const sorted = [...points].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-//     console.log(`📦 Batch sync: ${sorted.length} points`);
+//     // Batches from the app are per-session in practice, but group
+//     // defensively in case a caller ever mixes sessions — each session's
+//     // points still get processed as a single unit under its own lock.
+//     const bySession = new Map();
+//     points.forEach((point, index) => {
+//       const key = String(point.sessionId);
+//       if (!bySession.has(key)) bySession.set(key, []);
+//       bySession.get(key).push({ ...point, __index: index });
+//     });
 
-//     const results = [];
-//     let successCount = 0;
+//     console.log(`📦 Batch sync: ${points.length} points across ${bySession.size} session(s)`);
 
-//     for (const point of sorted) {
-//       const { userId, sessionId, latitude, longitude, timestamp, accuracy } = point;
+//     const results = new Array(points.length);
 
-//       if (!userId || !sessionId || latitude === undefined || longitude === undefined) {
-//         results.push({ success: false, message: 'Missing required fields', point });
-//         continue;
-//       }
+//     await Promise.all(
+//       Array.from(bySession.entries()).map(([sessionId, sessionPoints]) =>
+//         runExclusive(sessionId, async () => {
+//           try {
+//             const sessionResults = await processLocationBatchForSession(sessionId, sessionPoints);
+//             sessionResults.forEach((r, i) => {
+//               if (r !== undefined) results[i] = r;
+//             });
+//           } catch (sessionErr) {
+//             console.error(`❌ Error processing batch for session ${sessionId}:`, sessionErr.message);
+//             sessionPoints.forEach(p => {
+//               results[p.__index] = { success: false, message: sessionErr.message };
+//             });
+//           }
+//         })
+//       )
+//     );
 
-//       try {
-//         const result = await runExclusive(sessionId, () =>
-//           processLocationPoint({ userId, sessionId, latitude, longitude, accuracy, timestamp: timestamp || new Date() })
-//         );
-
-//         if (result.body.success !== false) successCount++;
-//         results.push(result.body);
-//       } catch (pointErr) {
-//         console.error('❌ Error processing batched point:', pointErr.message);
-//         results.push({ success: false, message: pointErr.message, point });
-//       }
-//     }
-
-//     console.log(`✅ Batch sync complete: ${successCount}/${sorted.length} points processed`);
+//     const successCount = results.filter(r => r?.success !== false).length;
+//     console.log(`✅ Batch sync complete: ${successCount}/${points.length} points processed`);
 
 //     res.json({
 //       success: true,

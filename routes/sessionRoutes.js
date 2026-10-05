@@ -6,6 +6,13 @@ const Session = require("../models/FSEModel/Session");
 const Location = require("../models/LocationModel/Location");
 const calculateDistance = require("../utils/distance");
 const { runExclusive } = require("../utils/sessionLock");
+const {
+  requireTrackedRole,
+  requireAdmin,
+  requireUserAccess,
+  requireSessionAccess,
+} = require("../middleware/hierarchyAccess");
+const { canViewUser } = require("../utils/hierarchyScope");
 
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -139,7 +146,17 @@ router.get("/", async (req, res) => {
     const skip = (page - 1) * limit;
     const { userId, status } = req.query;
     const filter = {};
-    if (userId) filter.userId = userId;
+    // Visibility: self + people below me (Admin: everyone).
+    if (userId) {
+      if (!(await canViewUser(req.user, userId))) {
+        return res
+          .status(403)
+          .json({ success: false, message: "You are not allowed to view this user" });
+      }
+      filter.userId = String(userId);
+    } else if (req.user.role !== "Admin") {
+      filter.userId = String(req.user.id); // default: my own sessions only
+    }
     if (status) filter.status = status;
 
     const [sessions, total] = await Promise.all([
@@ -176,7 +193,7 @@ router.get("/", async (req, res) => {
 });
 
 // ─── CHECK TODAY'S SESSION ──────────────────────────────────────────────
-router.get("/today/:userId", async (req, res) => {
+router.get("/today/:userId", requireUserAccess, async (req, res) => {
   try {
     const { userId } = req.params;
     if (!userId) {
@@ -215,7 +232,7 @@ router.get("/today/:userId", async (req, res) => {
 });
 
 // ─── ORPHANED SESSION CHECK ─────────────────────────────────────────────
-router.get("/orphaned/:userId", async (req, res) => {
+router.get("/orphaned/:userId", requireUserAccess, async (req, res) => {
   try {
     const { userId } = req.params;
     if (!userId) {
@@ -246,9 +263,10 @@ router.get("/orphaned/:userId", async (req, res) => {
 });
 
 // ─── START SESSION ──────────────────────────────────────────────────────
-router.post("/start", async (req, res) => {
+router.post("/start", requireTrackedRole, async (req, res) => {
   try {
-    const { userId, latitude, longitude } = req.body;
+    const { latitude, longitude } = req.body;
+    const userId = String(req.user.id); // never trust a userId sent by the client
 
     if (!userId || userId.toString().trim() === "") {
       return res.status(400).json({ message: "userId is required" });
@@ -330,11 +348,16 @@ router.post("/start", async (req, res) => {
 });
 
 // ─── END SESSION ────────────────────────────────────────────────────────
-router.post("/end", async (req, res) => {
+router.post("/end", requireTrackedRole, async (req, res) => {
   try {
     const { sessionId, finalLocation } = req.body;
     if (!sessionId) {
       return res.status(400).json({ message: "Session ID required" });
+    }
+    // Only the owner can end their own day.
+    const ownsSession = await Session.exists({ _id: sessionId, userId: String(req.user.id) });
+    if (!ownsSession) {
+      return res.status(403).json({ message: "This session does not belong to you" });
     }
 
     console.log(`📤 Ending session: ${sessionId}`);
@@ -402,7 +425,7 @@ router.post("/end", async (req, res) => {
 });
 
 // ─── FORCE REBUILD ENDPOINT ─────────────────────────────────────────────
-router.post("/rebuild/:sessionId", async (req, res) => {
+router.post("/rebuild/:sessionId", requireSessionAccess(), async (req, res) => {
   try {
     const { sessionId } = req.params;
     console.log(`🔄 Manually rebuilding route for ${sessionId}`);
@@ -431,7 +454,7 @@ router.post("/rebuild/:sessionId", async (req, res) => {
 });
 
 // ─── GET SESSION BY ID ──────────────────────────────────────────────────
-router.get("/:sessionId", async (req, res) => {
+router.get("/:sessionId", requireSessionAccess(), async (req, res) => {
   try {
     const { sessionId } = req.params;
     const routePage = parseInt(req.query.routePage, 10) || null;
@@ -515,7 +538,7 @@ router.get("/:sessionId", async (req, res) => {
 });
 
 // ─── FIX OLD SESSIONS ENDPOINT ──────────────────────────────────────────
-router.post("/fix-sessions", async (req, res) => {
+router.post("/fix-sessions", requireAdmin, async (req, res) => {
   try {
     const sessions = await Session.find({
       pointCount: 0,
@@ -548,7 +571,7 @@ router.post("/fix-sessions", async (req, res) => {
 
 module.exports = router;
 
-//------------------- 31.08.2026 -------------------------
+//------------------ 05.10.26 Backup ------------------
 // // sessionRoutes.js - COMPLETE FIXED VERSION
 
 // const express = require("express");
@@ -581,6 +604,15 @@ module.exports = router;
 
 //     if (locations.length === 0) {
 //       console.log(`⚠️ No locations found for session ${sessionId}`);
+//       // ✅ FIX: Check if session has route points already
+//       const session = await Session.findById(sessionId).select("route pointCount totalDistanceKm");
+//       if (session && session.route && session.route.length > 0) {
+//         console.log(`📌 Session has ${session.route.length} route points, updating pointCount`);
+//         await Session.findByIdAndUpdate(sessionId, {
+//           pointCount: session.route.length
+//         });
+//         return session;
+//       }
 //       return null;
 //     }
 
@@ -689,13 +721,21 @@ module.exports = router;
 //         .sort({ createdAt: -1 })
 //         .skip(skip)
 //         .limit(limit)
-//         .select("-route"),
+//         .select("-route") // Exclude route for performance
+//         .lean(),
 //       Session.countDocuments(filter),
 //     ]);
 
+//     // ✅ FIX: Ensure pointCount and totalDistanceKm are populated
+//     const enrichedSessions = sessions.map(session => ({
+//       ...session,
+//       pointCount: session.pointCount ?? 0,
+//       totalDistanceKm: session.totalDistanceKm ?? 0,
+//     }));
+
 //     res.status(200).json({
 //       success: true,
-//       sessions,
+//       sessions: enrichedSessions,
 //       pagination: {
 //         page,
 //         limit,
@@ -840,6 +880,7 @@ module.exports = router;
 //         latitude: lat,
 //         longitude: lng,
 //         timestamp: savedSession.startTime,
+//         accuracy: 0,
 //       });
 //       console.log(
 //         `✅ Start point saved to Location for session ${savedSession._id}`,
@@ -885,6 +926,7 @@ module.exports = router;
 //               latitude: finalLocation.latitude,
 //               longitude: finalLocation.longitude,
 //               timestamp: new Date(),
+//               accuracy: 0,
 //             });
 //             console.log("✅ Final location saved");
 //           }
@@ -977,20 +1019,31 @@ module.exports = router;
 //       return res.status(404).json({ message: "Session not found" });
 //     }
 
-//     if (session.status === "ACTIVE" || session.status === "AUTO_ENDED") {
+//     // ✅ FIX: Always rebuild route for ACTIVE or AUTO_ENDED sessions
+//     const shouldRebuild = 
+//       session.status === "ACTIVE" || 
+//       session.status === "AUTO_ENDED" ||
+//       (session.route?.length === 0 && session.pointCount > 0);
+
+//     if (shouldRebuild) {
+//       console.log(`🔄 Rebuilding route for session ${sessionId}`);
 //       const rebuilt = await runExclusive(sessionId, async () => {
 //         return await rebuildSessionRoute(sessionId);
 //       });
 //       if (rebuilt) {
 //         session = rebuilt;
-//         console.log(
-//           `✅ Route rebuilt: ${session.route?.length || 0} points, ${session.totalDistanceKm}km`,
-//         );
+//         console.log(`✅ Route rebuilt: ${session.route?.length || 0} points, ${session.totalDistanceKm}km`);
 //       } else {
 //         console.log(`⚠️ No locations found for session ${sessionId}`);
+//         // ✅ Even if no locations, ensure pointCount is correct
+//         if (session.pointCount === 0 && session.route?.length > 0) {
+//           session.pointCount = session.route.length;
+//           await session.save();
+//         }
 //       }
 //     }
 
+//     // ✅ Auto-end if stale (24+ hours old)
 //     if (session.status === "ACTIVE") {
 //       const twentyFourHoursAgo = new Date();
 //       twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
@@ -1001,11 +1054,12 @@ module.exports = router;
 //       }
 //     }
 
+//     // ✅ Paginate route if requested
 //     if (routePage) {
 //       const sessionObj = session.toObject();
 //       const start = (routePage - 1) * routeLimit;
-//       const totalPoints = sessionObj.route.length;
-//       sessionObj.route = sessionObj.route.slice(start, start + routeLimit);
+//       const totalPoints = sessionObj.route?.length || 0;
+//       sessionObj.route = sessionObj.route?.slice(start, start + routeLimit) || [];
 //       sessionObj.routePagination = {
 //         page: routePage,
 //         limit: routeLimit,
@@ -1015,7 +1069,17 @@ module.exports = router;
 //       return res.json(sessionObj);
 //     }
 
-//     res.json(session);
+//     // ✅ Ensure response always has route array
+//     const response = session.toObject ? session.toObject() : session;
+//     if (!response.route) response.route = [];
+//     if (response.pointCount === undefined) {
+//       response.pointCount = response.route.length;
+//     }
+//     if (response.totalDistanceKm === undefined) {
+//       response.totalDistanceKm = 0;
+//     }
+
+//     res.json(response);
 //   } catch (err) {
 //     console.error("❌ Error fetching session:", err.message);
 //     res
@@ -1024,5 +1088,36 @@ module.exports = router;
 //   }
 // });
 
-// module.exports = router;
+// // ─── FIX OLD SESSIONS ENDPOINT ──────────────────────────────────────────
+// router.post("/fix-sessions", async (req, res) => {
+//   try {
+//     const sessions = await Session.find({
+//       pointCount: 0,
+//       status: { $in: ["ENDED", "AUTO_ENDED"] }
+//     });
+    
+//     let fixed = 0;
+//     for (const session of sessions) {
+//       const count = session.route?.length || 0;
+//       if (count > 0) {
+//         await Session.findByIdAndUpdate(session._id, { 
+//           pointCount: count,
+//           totalDistanceKm: session.totalDistanceKm || 0
+//         });
+//         fixed++;
+//         console.log(`✅ Fixed session ${session._id}: ${count} points`);
+//       }
+//     }
+    
+//     res.json({ 
+//       success: true, 
+//       fixed, 
+//       total: sessions.length,
+//       message: `Fixed ${fixed} sessions with missing pointCount`
+//     });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 
+// module.exports = router;

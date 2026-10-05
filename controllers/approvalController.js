@@ -2,7 +2,19 @@
 const mongoose = require('mongoose');
 const Register = require('../models/Register');
 const admin = require('../config/firebaseAdmin');
-const { getApproverRole, getChildRoles, ROLE_LABELS } = require('../utils/roleHierarchy');
+const {
+  getApproverRoles,
+  getChildRoles,
+  requiresParentSelection,
+  ROLE_LABELS,
+} = require('../utils/roleHierarchy');
+const { canViewUser } = require('../utils/hierarchyScope');
+
+// Transition switch: accounts created before the hierarchy existed have no
+// parentId. While true, approvers can still see/approve those "unassigned"
+// accounts (and approving one assigns it to them). Set to false once the
+// backfill / Admin assignment is complete.
+const ALLOW_LEGACY_UNASSIGNED = true;
 
 const SAFE_FIELDS = '-password -otp -otpExpiry -resetOtp -resetOtpExpiry';
 
@@ -22,7 +34,21 @@ function buildScopeFilter(reqUser) {
     return null; // this role does not approve anyone
   }
 
-  return { role: { $in: childRoles } };
+  // Admin (no Register id) approves by role only.
+  if (reqUser.role === 'Admin' || !isValidObjectId(reqUser.id)) {
+    return { role: { $in: childRoles } };
+  }
+
+  // Everyone else only sees registrations that picked THEM as superior.
+  const scopedRoles = childRoles.filter(requiresParentSelection);
+  const openRoles = childRoles.filter((r) => !requiresParentSelection(r));
+  const parentMatch = ALLOW_LEGACY_UNASSIGNED ? { $in: [reqUser.id, null] } : reqUser.id;
+
+  const or = [];
+  if (openRoles.length) or.push({ role: { $in: openRoles } });
+  if (scopedRoles.length) or.push({ role: { $in: scopedRoles }, parentId: parentMatch });
+
+  return or.length === 1 ? or[0] : { $or: or };
 }
 
 // GET /api/approvals/pending
@@ -72,11 +98,15 @@ function isAuthorizedApprover(reqUser, targetUser) {
     return false; // can't approve self
   }
 
-  const expectedApproverRole = getApproverRole(targetUser.role);
-  if (expectedApproverRole !== reqUser.role) return false;
+  if (!getApproverRoles(targetUser.role).includes(reqUser.role)) return false;
 
-  // Any user holding the correct approver role may act on this request —
-  // visibility/authorization is role-based, not assigned-individual-based.
+  // Roles that pick a superior at registration: only THAT superior (or Admin
+  // via the admin routes) may approve. Unassigned legacy accounts are allowed
+  // while ALLOW_LEGACY_UNASSIGNED is on.
+  if (requiresParentSelection(targetUser.role) && reqUser.role !== 'Admin') {
+    if (targetUser.parentId) return targetUser.parentId.equals(reqUser.id);
+    return ALLOW_LEGACY_UNASSIGNED;
+  }
   return true;
 }
 
@@ -99,6 +129,10 @@ exports.approveUser = async (req, res) => {
     targetUser.approvalStatus = 'approved';
     targetUser.isApproved = true;
     targetUser.approvedBy = isValidObjectId(req.user.id) ? req.user.id : null;
+    // Make sure the approver becomes the superior if none was stored yet.
+    if (!targetUser.parentId && isValidObjectId(req.user.id) && requiresParentSelection(targetUser.role)) {
+      targetUser.parentId = req.user.id;
+    }
     targetUser.approvedAt = new Date();
     targetUser.rejectedAt = null;
     targetUser.rejectionReason = null;
@@ -232,7 +266,7 @@ exports.viewUserDetails = async (req, res) => {
     const isSelf = isValidObjectId(req.user.id) && targetUser._id.equals(req.user.id);
     const isChildRole = childRoles.includes(targetUser.role);
 
-    if (isSelf || isChildRole) {
+    if (isSelf || (await canViewUser(req.user, targetUser._id)) || (isChildRole && !targetUser.parentId)) {
       return res.json(targetUser);
     }
 
@@ -242,42 +276,37 @@ exports.viewUserDetails = async (req, res) => {
   }
 };
 
-
-//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
+//------------- 05.10.26 Backup ---------------
+// const mongoose = require('mongoose');
 // const Register = require('../models/Register');
 // const admin = require('../config/firebaseAdmin');
 // const { getApproverRole, getChildRoles, ROLE_LABELS } = require('../utils/roleHierarchy');
 
 // const SAFE_FIELDS = '-password -otp -otpExpiry -resetOtp -resetOtpExpiry';
 
+// function isValidObjectId(id) {
+//   return !!id && mongoose.Types.ObjectId.isValid(id);
+// }
+
 // // Build the mongo filter representing "users this approver is allowed to
-// // see/manage", based on their role and hierarchy position.
-// function buildScopeFilter(approver) {
-//   const childRoles = getChildRoles(approver.role);
+// // see/manage", based on their JWT role. Every approver role (Admin,
+// // Marketing Manager, Distributor, FSE) sees ALL pending/processed
+// // requests for their child role(s) — no specific parent/individual is
+// // pre-assigned during registration.
+// function buildScopeFilter(reqUser) {
+//   const childRoles = getChildRoles(reqUser.role);
 
 //   if (!childRoles.length) {
 //     return null; // this role does not approve anyone
 //   }
 
-//   if (approver.role === 'Admin') {
-//     // Admin approves Radnus Employees and Marketing Managers system-wide
-//     // (no specific parent selection happens for these roles).
-//     return { role: { $in: childRoles } };
-//   }
-
-//   // Every other approver only manages users who explicitly chose them
-//   // as their parent during registration.
-//   return { role: { $in: childRoles }, parentId: approver._id };
+//   return { role: { $in: childRoles } };
 // }
 
 // // GET /api/approvals/pending
 // exports.getPendingApprovals = async (req, res) => {
 //   try {
-//     const approver = await Register.findById(req.user.id);
-//     if (!approver) return res.status(404).json({ message: 'User not found' });
-
-//     const filter = buildScopeFilter(approver);
+//     const filter = buildScopeFilter(req.user);
 //     if (!filter) {
 //       return res.status(403).json({ message: 'Your role does not approve any registrations' });
 //     }
@@ -295,10 +324,7 @@ exports.viewUserDetails = async (req, res) => {
 // // GET /api/approvals/processed  (approved + rejected, for history tabs)
 // exports.getProcessedApprovals = async (req, res) => {
 //   try {
-//     const approver = await Register.findById(req.user.id);
-//     if (!approver) return res.status(404).json({ message: 'User not found' });
-
-//     const filter = buildScopeFilter(approver);
+//     const filter = buildScopeFilter(req.user);
 //     if (!filter) {
 //       return res.status(403).json({ message: 'Your role does not approve any registrations' });
 //     }
@@ -318,31 +344,29 @@ exports.viewUserDetails = async (req, res) => {
 //   }
 // };
 
-// // Shared authorization check: can `approver` act on `targetUser`?
-// function isAuthorizedApprover(approver, targetUser) {
-//   if (approver._id.equals(targetUser._id)) return false; // can't approve self
-//   const expectedApproverRole = getApproverRole(targetUser.role);
-//   if (expectedApproverRole !== approver.role) return false;
-
-//   if (approver.role === 'Admin') {
-//     return true; // Admin can approve any Radnus/MarketingManager request
+// // Shared authorization check: can the requesting JWT user act on `targetUser`?
+// function isAuthorizedApprover(reqUser, targetUser) {
+//   if (isValidObjectId(reqUser.id) && targetUser._id.equals(reqUser.id)) {
+//     return false; // can't approve self
 //   }
 
-//   // All other approvers may only act on users who picked them as parent
-//   return targetUser.parentId && targetUser.parentId.equals(approver._id);
+//   const expectedApproverRole = getApproverRole(targetUser.role);
+//   if (expectedApproverRole !== reqUser.role) return false;
+
+//   // Any user holding the correct approver role may act on this request —
+//   // visibility/authorization is role-based, not assigned-individual-based.
+//   return true;
 // }
 
 // // POST /api/approvals/approve/:userId
 // exports.approveUser = async (req, res) => {
 //   try {
 //     const { userId } = req.params;
-//     const approver = await Register.findById(req.user.id);
-//     if (!approver) return res.status(404).json({ message: 'User not found' });
 
 //     const targetUser = await Register.findById(userId);
 //     if (!targetUser) return res.status(404).json({ message: 'Registration request not found' });
 
-//     if (!isAuthorizedApprover(approver, targetUser)) {
+//     if (!isAuthorizedApprover(req.user, targetUser)) {
 //       return res.status(403).json({ message: 'You are not authorized to approve this user' });
 //     }
 
@@ -352,11 +376,11 @@ exports.viewUserDetails = async (req, res) => {
 
 //     targetUser.approvalStatus = 'approved';
 //     targetUser.isApproved = true;
-//     targetUser.approvedBy = approver._id;
+//     targetUser.approvedBy = isValidObjectId(req.user.id) ? req.user.id : null;
 //     targetUser.approvedAt = new Date();
 //     targetUser.rejectedAt = null;
 //     targetUser.rejectionReason = null;
-//     targetUser.approvalNotes = `Approved by ${ROLE_LABELS[approver.role] || approver.role}`;
+//     targetUser.approvalNotes = `Approved by ${ROLE_LABELS[req.user.role] || req.user.role}`;
 
 //     await targetUser.save();
 
@@ -401,13 +425,10 @@ exports.viewUserDetails = async (req, res) => {
 //       return res.status(400).json({ message: 'Rejection reason required' });
 //     }
 
-//     const approver = await Register.findById(req.user.id);
-//     if (!approver) return res.status(404).json({ message: 'User not found' });
-
 //     const targetUser = await Register.findById(userId);
 //     if (!targetUser) return res.status(404).json({ message: 'Registration request not found' });
 
-//     if (!isAuthorizedApprover(approver, targetUser)) {
+//     if (!isAuthorizedApprover(req.user, targetUser)) {
 //       return res.status(403).json({ message: 'You are not authorized to reject this user' });
 //     }
 
@@ -417,10 +438,10 @@ exports.viewUserDetails = async (req, res) => {
 
 //     targetUser.approvalStatus = 'rejected';
 //     targetUser.isApproved = false;
-//     targetUser.approvedBy = approver._id;
+//     targetUser.approvedBy = isValidObjectId(req.user.id) ? req.user.id : null;
 //     targetUser.rejectedAt = new Date();
 //     targetUser.rejectionReason = reason;
-//     targetUser.approvalNotes = `Rejected by ${ROLE_LABELS[approver.role] || approver.role}: ${reason}`;
+//     targetUser.approvalNotes = `Rejected by ${ROLE_LABELS[req.user.role] || req.user.role}: ${reason}`;
 
 //     await targetUser.save();
 
@@ -459,10 +480,7 @@ exports.viewUserDetails = async (req, res) => {
 // // approver in the hierarchy (any status), for management dashboards.
 // exports.getMyTeam = async (req, res) => {
 //   try {
-//     const approver = await Register.findById(req.user.id);
-//     if (!approver) return res.status(404).json({ message: 'User not found' });
-
-//     const filter = buildScopeFilter(approver);
+//     const filter = buildScopeFilter(req.user);
 //     if (!filter) {
 //       return res.json([]);
 //     }
@@ -474,26 +492,25 @@ exports.viewUserDetails = async (req, res) => {
 //   }
 // };
 
-// // GET /api/approvals/view/:userId — single user detail, scoped so an
-// // approver can only view users within their own hierarchy branch
-// // (Admin can view anyone).
+// // GET /api/approvals/view/:userId — single user detail. Admin can view
+// // anyone; other approvers can view themselves or any user in a child
+// // role of theirs (role-based, same as the approval scope).
 // exports.viewUserDetails = async (req, res) => {
 //   try {
 //     const { userId } = req.params;
-//     const approver = await Register.findById(req.user.id);
-//     if (!approver) return res.status(404).json({ message: 'User not found' });
 
 //     const targetUser = await Register.findById(userId).select(SAFE_FIELDS);
 //     if (!targetUser) return res.status(404).json({ message: 'User not found' });
 
-//     if (approver.role === 'Admin') {
+//     if (req.user.role === 'Admin') {
 //       return res.json(targetUser);
 //     }
 
-//     if (
-//       targetUser._id.equals(approver._id) ||
-//       (targetUser.parentId && targetUser.parentId.equals(approver._id))
-//     ) {
+//     const childRoles = getChildRoles(req.user.role);
+//     const isSelf = isValidObjectId(req.user.id) && targetUser._id.equals(req.user.id);
+//     const isChildRole = childRoles.includes(targetUser.role);
+
+//     if (isSelf || isChildRole) {
 //       return res.json(targetUser);
 //     }
 
@@ -502,3 +519,4 @@ exports.viewUserDetails = async (req, res) => {
 //     res.status(500).json({ message: error.message });
 //   }
 // };
+

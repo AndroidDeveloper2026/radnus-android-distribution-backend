@@ -3,6 +3,10 @@
 require("dotenv").config({
   path: `.env.${process.env.NODE_ENV || "dev"}`,
 });
+// "Today", cron times and Date#setHours must follow India time even when the
+// host (Render/AWS/...) runs in UTC. Set before any Date is used.
+process.env.TZ = process.env.TZ || "Asia/Kolkata";
+
 const express = require("express");
 const connectDB = require("./config/db");
 const http = require("http");
@@ -12,6 +16,9 @@ const Location = require("./models/LocationModel/Location");
 const salespersonRoutes = require("./routes/salespersonRoutes");
 const dns = require("dns");
 const cors = require("cors");
+const auth = require("./middleware/authMiddleware");
+const { canViewUser } = require("./utils/hierarchyScope");
+const { attachSocketAuth, joinPersonalRooms } = require("./utils/teamSocket");
 
 dns.setServers(["1.1.1.1", "8.8.8.8"]);
 dns.setDefaultResultOrder("ipv4first");
@@ -31,10 +38,8 @@ app.use(cors({
 }));
 
 app.use((req, res, next) => {
+  // Never log request bodies: they contain passwords, OTPs and GPS batches.
   console.log(`📨 ${req.method} ${req.path}`);
-  if (req.body && Object.keys(req.body).length > 0) {
-    console.log('📦 Body:', JSON.stringify(req.body, null, 2));
-  }
   next();
 });
 
@@ -67,9 +72,10 @@ app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/territory", require("./routes/territoryRoutes"));
 app.use("/api/distributors", require("./routes/distributorRoutes"));
 app.use("/api/retailers", require("./routes/retailerRoute"));
-app.use("/api/fse", require("./routes/fseRoutes"));
-app.use("/api/session", require("./routes/sessionRoutes"));
-app.use("/api/location", require("./routes/locationRoutes"));
+app.use("/api/fse", auth, require("./routes/fseRoutes"));
+app.use("/api/session", auth, require("./routes/sessionRoutes"));
+app.use("/api/team", auth, require("./routes/teamRoutes"));
+app.use("/api/location", auth, require("./routes/locationRoutes"));
 app.use("/api/executives", require("./routes/executiveRoutes"));
 app.use("/api/managers", require("./routes/managerRoutes"));
 app.use("/api/customers", require("./routes/customerRoutes"));
@@ -88,16 +94,29 @@ console.log("✅ All routes registered");
 const startAutoEndJob = require("./cron/autoEndDay");
 startAutoEndJob();
 
-// ✅ SOCKET.IO CONNECTION
+// ✅ SOCKET.IO CONNECTION (JWT required; superiors get rooms)
+attachSocketAuth(io);
 io.on("connection", socket => {
-  console.log(`📱 User connected: ${socket.id}`);
+  console.log(`📱 User connected: ${socket.id} (${socket.user && socket.user.role})`);
+  joinPersonalRooms(socket);
 
   const subscribedSessions = new Set();
   let userLocation = null;
 
-  socket.on("subscribe-location", ({ sessionId }) => {
+  socket.on("subscribe-location", async ({ sessionId } = {}) => {
     if (!sessionId) {
       console.log(`⚠️ ${socket.id} subscribe-location called without sessionId`);
+      return;
+    }
+
+    // Only the owner, their superiors or Admin may watch a session.
+    try {
+      const s = await Session.findById(sessionId).select("userId").lean();
+      if (!s || !(await canViewUser(socket.user, s.userId))) {
+        socket.emit("subscribe-denied", { sessionId });
+        return;
+      }
+    } catch (e) {
       return;
     }
 
@@ -206,7 +225,7 @@ process.on("uncaughtException", (error) => {
   console.log("❌ Uncaught Exception:", error);
 });
 
-//-------------- 21-09-2026 -------------------
+//------------- 05.10.26 Backup -----------------
 // // server.js - COMPLETE FIXED VERSION
 
 // require("dotenv").config({
@@ -221,12 +240,11 @@ process.on("uncaughtException", (error) => {
 // const salespersonRoutes = require("./routes/salespersonRoutes");
 // const dns = require("dns");
 // const cors = require("cors");
-// const fixLocationIndexes = require("./utils/fixLocationIndexes");
 
 // dns.setServers(["1.1.1.1", "8.8.8.8"]);
 // dns.setDefaultResultOrder("ipv4first");
 
-// connectDB().then(() => fixLocationIndexes(Location));
+// connectDB();
 
 // const app = express();
 
@@ -292,6 +310,7 @@ process.on("uncaughtException", (error) => {
 // app.use("/api/suppliers", require("./routes/supplierRoutes"));
 // app.use("/api/purchases", require("./routes/purchaseRoutes"));
 // app.use("/api/salespersons", require("./routes/salespersonRoutes"));
+// app.use("/api/app", require("./routes/appVersionRoutes"));
 // console.log("✅ All routes registered");
 
 // const startAutoEndJob = require("./cron/autoEndDay");

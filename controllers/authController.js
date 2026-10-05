@@ -8,9 +8,13 @@ const { generateAccessToken, generateRefreshToken } = require("../utils/token");
 const resend = require("../config/resend");
 const {
   getApproverRole,
+  getApproverRoles,
   requiresApproval,
+  requiresParentSelection,
   ROLE_LABELS,
 } = require("../utils/roleHierarchy");
+const mongoose = require("mongoose");
+const { getEligibleParents } = require("./hierarchyController");
 
 // Notify every active/approved user holding `approverRole` that a new
 // registration in `user.role` needs their review. Works for Admin and
@@ -19,8 +23,11 @@ const {
 // that role are notified.
 async function notifyApproversAboutNewRegistration(approverRole, user) {
   try {
-    const filter = { role: approverRole, fcmToken: { $ne: null } };
-    if (approverRole !== 'Admin') {
+    // If the new user picked a specific superior, notify only that person.
+    let filter = { role: approverRole, fcmToken: { $ne: null } };
+    if (user.parentId) {
+      filter = { _id: user.parentId, fcmToken: { $ne: null } };
+    } else if (approverRole !== 'Admin') {
       filter.approvalStatus = 'approved';
     } else {
       filter.isApproved = true;
@@ -66,6 +73,7 @@ exports.register = async (req, res) => {
       password,
       confirmPassword,
       fcmToken,
+      parentId,
     } = req.body;
 
     if (!fcmToken) {
@@ -103,7 +111,26 @@ exports.register = async (req, res) => {
     // parent/individual needs to be picked — any user holding the
     // correct approver role can review and approve the request.
     const needsApproval = requiresApproval(role);
-    const approverRole = getApproverRole(role);
+    let approverRole = getApproverRole(role);
+    let validatedParentId = null;
+
+    // ⭐ Hierarchy: these roles must say WHO their superior is.
+    if (requiresParentSelection(role)) {
+      if (!parentId || !mongoose.Types.ObjectId.isValid(parentId)) {
+        return res.status(400).json({ message: "Please select your superior" });
+      }
+      const parent = await Register.findById(parentId).select("role approvalStatus isActive");
+      if (
+        !parent ||
+        parent.approvalStatus !== "approved" ||
+        parent.isActive === false ||
+        !getApproverRoles(role).includes(parent.role)
+      ) {
+        return res.status(400).json({ message: "Selected superior is not valid for this role" });
+      }
+      validatedParentId = parent._id;
+      approverRole = parent.role;
+    }
 
     // Save user
     const user = new Register({
@@ -116,6 +143,7 @@ exports.register = async (req, res) => {
       mobile,
       password,
       fcmToken,
+      parentId: validatedParentId,
       approvalStatus: needsApproval ? 'pending' : 'approved',
       isApproved: !needsApproval,
       isVerified: false,
@@ -203,30 +231,8 @@ exports.register = async (req, res) => {
   }
 };
 
-// GET ELIGIBLE PARENT/APPROVER LIST (for registration picker)
-exports.getEligibleParents = async (req, res) => {
-  try {
-    const { role } = req.query;
-    if (!role) {
-      return res.status(400).json({ message: "role query param required" });
-    }
-
-    const approverRole = getApproverRole(role);
-    if (!approverRole || !requiresParentSelection(role)) {
-      return res.json([]); // no specific parent selection needed for this role
-    }
-
-    const parents = await Register.find({
-      role: approverRole,
-      approvalStatus: 'approved',
-      isActive: { $ne: false },
-    }).select('name email mobile district state taluk role');
-
-    res.json(parents);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+// GET ELIGIBLE PARENT/APPROVER LIST (registration picker) – see hierarchyController
+exports.getEligibleParents = getEligibleParents;
 
 // VERIFY OTP
 exports.verifyOtp = async (req, res) => {
@@ -689,7 +695,7 @@ exports.refreshToken = async (req, res) => {
   }
 };
 
-//------------------ 12.09.2026 -------------------
+//---------------- 05.10.26 --------------------
 // // controllers/authController.js
 // const bcrypt = require("bcrypt");
 // const jwt = require("jsonwebtoken");
@@ -816,14 +822,46 @@ exports.refreshToken = async (req, res) => {
 //     const otp = user.generateOtp();
 //     await user.save();
 
-//     // Send OTP via FCM
-//     await admin.messaging().send({
-//       token: fcmToken,
-//       notification: {
-//         title: "OTP Verification",
-//         body: `Your OTP is ${otp}`,
-//       },
-//     });
+//     // ⭐ FIX: The user + OTP are already persisted above. Everything from
+//     // here on is *delivery*, not *generation* — a bad/expired FCM token,
+//     // a messaging() outage, etc. must never turn into a 500 for the whole
+//     // registration, because that used to abort the request AFTER the
+//     // account+OTP were already saved, leaving the app stuck on "Terms &
+//     // Conditions" with no way to reach the OTP screen and no visible
+//     // error. We now try both push and email, track what worked, and
+//     // still return 201 either way — the "Resend OTP" screen is the
+//     // recovery path if both happen to fail.
+//     const otpDelivery = { push: false, email: false };
+
+//     try {
+//       await admin.messaging().send({
+//         token: fcmToken,
+//         notification: {
+//           title: "OTP Verification",
+//           body: `Your OTP is ${otp}`,
+//         },
+//       });
+//       otpDelivery.push = true;
+//     } catch (pushErr) {
+//       console.error("⚠️ OTP push notification failed:", pushErr.message);
+//     }
+
+//     try {
+//       await resend.emails.send({
+//         from: "Radnus Distribution App <noreply@service.radnus.in>",
+//         to: email,
+//         subject: "Your Registration OTP",
+//         html: `
+//           <h2>Verify your account</h2>
+//           <p>Your OTP is:</p>
+//           <h1>${otp}</h1>
+//           <p>This OTP expires in 5 minutes.</p>
+//         `,
+//       });
+//       otpDelivery.email = true;
+//     } catch (emailErr) {
+//       console.error("⚠️ OTP email failed:", emailErr.message);
+//     }
 
 //     // ⭐ If approval required, notify every approver holding the
 //     // correct approver role for this registration.
@@ -839,10 +877,26 @@ exports.refreshToken = async (req, res) => {
 //       requiresApproval: needsApproval,
 //       approvalStatus: user.approvalStatus,
 //       role: user.role,
+//       otpDelivery,
 //     });
 
 //   } catch (error) {
 //     console.error(error);
+
+//     // ⭐ FIX: a duplicate mobile/email hitting the unique index (e.g. two
+//     // near-simultaneous submits racing past the earlier existingUser
+//     // check) used to fall through to a generic 500 "Server error" —
+//     // confusing, since the FIRST request usually already succeeded and
+//     // the user already has a valid account + OTP in hand. Report this
+//     // as the same 409 the explicit pre-check uses, so the client can
+//     // recognize "you're already registered" instead of "something broke".
+//     if (error.code === 11000) {
+//       const field = Object.keys(error.keyPattern || {})[0] || "field";
+//       return res.status(409).json({
+//         message: `This ${field} is already registered.`,
+//       });
+//     }
+
 //     res.status(500).json({ message: "Server error" });
 //   }
 // };
@@ -957,19 +1011,58 @@ exports.refreshToken = async (req, res) => {
 
 //       await user.save();
 
+//       // ⭐ FIX: track delivery per channel instead of assuming success.
+//       // Previously this silently reported "OTP resent successfully" even
+//       // when there was no fcmToken to send to, or when the push failed —
+//       // leaving the user stuck entering an OTP they never received with
+//       // no indication anything was wrong.
+//       const otpDelivery = { push: false, email: false };
+
 //       if (user.fcmToken) {
-//         await admin.messaging().send({
-//           token: user.fcmToken,
-//           notification: {
-//             title: "OTP Verification",
-//             body: `Your OTP is ${otp}`,
-//           },
+//         try {
+//           await admin.messaging().send({
+//             token: user.fcmToken,
+//             notification: {
+//               title: "OTP Verification",
+//               body: `Your OTP is ${otp}`,
+//             },
+//           });
+//           otpDelivery.push = true;
+//         } catch (pushErr) {
+//           console.error("⚠️ Resend OTP push failed:", pushErr.message);
+//         }
+//       }
+
+//       if (user.email) {
+//         try {
+//           await resend.emails.send({
+//             from: "Radnus Distribution App <noreply@service.radnus.in>",
+//             to: user.email,
+//             subject: "Your Registration OTP",
+//             html: `
+//               <h2>Verify your account</h2>
+//               <p>Your OTP is:</p>
+//               <h1>${otp}</h1>
+//               <p>This OTP expires in 5 minutes.</p>
+//             `,
+//           });
+//           otpDelivery.email = true;
+//         } catch (emailErr) {
+//           console.error("⚠️ Resend OTP email failed:", emailErr.message);
+//         }
+//       }
+
+//       if (!otpDelivery.push && !otpDelivery.email) {
+//         return res.status(502).json({
+//           success: false,
+//           message: "Could not deliver OTP via push or email. Please try again shortly.",
 //         });
 //       }
 
 //       return res.json({
 //         success: true,
 //         message: "OTP resent successfully",
+//         otpDelivery,
 //       });
 //     }
 
@@ -1293,6 +1386,3 @@ exports.refreshToken = async (req, res) => {
 //     res.status(403).json({ message: "Invalid refresh token" });
 //   }
 // };
-
-
-

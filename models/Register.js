@@ -1,3 +1,4 @@
+
 // models/Register.js
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
@@ -187,10 +188,13 @@ registerSchema.methods.generateOtp = function () {
   return otp;
 };
 
+// Hierarchy lookups (team tree, ancestors, approval scoping) all query by parentId.
+registerSchema.index({ parentId: 1, role: 1 });
+
 module.exports = mongoose.model("Register", registerSchema);
 
-//++++++++++++++++++++++++++++++++++++++++
-
+//--------------- 05.10.26 -----------------
+// // models/Register.js
 // const mongoose = require("mongoose");
 // const bcrypt = require("bcrypt");
 
@@ -206,6 +210,7 @@ module.exports = mongoose.model("Register", registerSchema);
 //         "MarketingManager",
 //         "MarketingExecutive",
 //         "Radnus",
+//         "Admin",
 //       ],
 //     },
 
@@ -283,9 +288,86 @@ module.exports = mongoose.model("Register", registerSchema);
 //     resetOtpExpiry: {
 //       type: Date,
 //     },
+
+//     // ⭐⭐ Admin-approval fields — ONLY meaningful/enforced for role === "Radnus".
+//     // For every other role these default to "approved"/true and are never
+//     // checked at login, so existing login behaviour is unchanged.
+//     approvalStatus: {
+//       type: String,
+//       enum: ["pending", "approved", "rejected"],
+//       default: "approved",
+//     },
+//     isApproved: {
+//       type: Boolean,
+//       default: true,
+//     },
+//     approvedBy: {
+//       type: mongoose.Schema.Types.ObjectId,
+//       ref: "Register",
+//       default: null,
+//     },
+//     approvedAt: {
+//       type: Date,
+//       default: null,
+//     },
+//     rejectionReason: {
+//       type: String,
+//       default: null,
+//     },
+//     approvalNotes: {
+//       type: String,
+//       default: null,
+//     },
+
+//     // ⭐⭐ Hierarchical approval system fields (generalized for ALL roles,
+//     // not just Radnus). These are additive — existing roles/flows that
+//     // don't use them keep working exactly as before.
+
+//     // The immediate parent/approver this user belongs to in the hierarchy
+//     // (e.g. a Retailer's parent is the FSE who approves them).
+//     parentId: {
+//       type: mongoose.Schema.Types.ObjectId,
+//       ref: 'Register',
+//       default: null,
+//     },
+
+//     // Who created this account. For self-registration this is null;
+//     // for accounts created by an admin/parent on someone's behalf this
+//     // can be populated.
+//     createdBy: {
+//       type: mongoose.Schema.Types.ObjectId,
+//       ref: 'Register',
+//       default: null,
+//     },
+
+//     rejectedAt: {
+//       type: Date,
+//       default: null,
+//     },
+
+//     // Active/Inactive toggle, independent of the approval workflow.
+//     isActive: {
+//       type: Boolean,
+//       default: true,
+//     },
 //   },
 //   { timestamps: true },
 // );
+
+// // Virtual convenience field that mirrors `approvalStatus` using the
+// // "status" terminology used across the approval feature spec
+// // (Pending / Approved / Rejected). Kept as a virtual so we don't store
+// // duplicate data — `approvalStatus` remains the single source of truth.
+// registerSchema.virtual('status').get(function () {
+//   if (!this.isActive) return 'Inactive';
+//   if (this.approvalStatus === 'pending') return 'Pending';
+//   if (this.approvalStatus === 'approved') return 'Approved';
+//   if (this.approvalStatus === 'rejected') return 'Rejected';
+//   return 'Pending';
+// });
+
+// registerSchema.set('toJSON', { virtuals: true });
+// registerSchema.set('toObject', { virtuals: true });
 
 // registerSchema.pre("save", async function () {
 //   if (!this.isModified("password")) return;
