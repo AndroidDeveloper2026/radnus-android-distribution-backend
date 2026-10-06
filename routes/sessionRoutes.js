@@ -1,7 +1,10 @@
-// sessionRoutes.js - COMPLETE FIXED VERSION
+
+// sessionRoutes.js — COMPLETE FIXED VERSION (with Attendance integration)
 
 const express = require("express");
+const mongoose = require("mongoose");
 const router = express.Router();
+
 const Session = require("../models/FSEModel/Session");
 const Location = require("../models/LocationModel/Location");
 const calculateDistance = require("../utils/distance");
@@ -13,8 +16,14 @@ const {
   requireSessionAccess,
 } = require("../middleware/hierarchyAccess");
 const { canViewUser } = require("../utils/hierarchyScope");
+const {
+  upsertCheckIn,
+  upsertCheckOut,
+} = require("../services/attendanceService");
 
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+
+// ─── Date helpers ─────────────────────────────────────────────────────
 
 function getStartOfToday() {
   const d = new Date();
@@ -26,7 +35,8 @@ function isFromPreviousDay(date) {
   return new Date(date) < getStartOfToday();
 }
 
-// ─── Route rebuild helper ──────────────────────────────────────────────
+// ─── Route rebuild helper ─────────────────────────────────────────────
+
 async function rebuildSessionRoute(sessionId) {
   try {
     console.log(`🔄 Rebuilding route for session ${sessionId}`);
@@ -37,12 +47,16 @@ async function rebuildSessionRoute(sessionId) {
 
     if (locations.length === 0) {
       console.log(`⚠️ No locations found for session ${sessionId}`);
-      // ✅ FIX: Check if session has route points already
-      const session = await Session.findById(sessionId).select("route pointCount totalDistanceKm");
+      // ✅ FIX: check if session has route points already
+      const session = await Session.findById(sessionId).select(
+        "route pointCount totalDistanceKm"
+      );
       if (session && session.route && session.route.length > 0) {
-        console.log(`📌 Session has ${session.route.length} route points, updating pointCount`);
+        console.log(
+          `📌 Session has ${session.route.length} route points, updating pointCount`
+        );
         await Session.findByIdAndUpdate(sessionId, {
-          pointCount: session.route.length
+          pointCount: session.route.length,
         });
         return session;
       }
@@ -57,7 +71,7 @@ async function rebuildSessionRoute(sessionId) {
         prev.latitude,
         prev.longitude,
         curr.latitude,
-        curr.longitude,
+        curr.longitude
       );
     }
 
@@ -74,23 +88,24 @@ async function rebuildSessionRoute(sessionId) {
         totalDistanceKm: parseFloat(totalDistance.toFixed(4)),
         pointCount: locations.length,
       },
-      { new: true },
+      { new: true }
     );
 
     console.log(
-      `✅ Route rebuilt: ${locations.length} points, ${totalDistance.toFixed(4)}km`,
+      `✅ Route rebuilt: ${locations.length} points, ${totalDistance.toFixed(4)}km`
     );
     return updatedSession;
   } catch (err) {
     console.error(
       `❌ Failed to rebuild route for session ${sessionId}:`,
-      err.message,
+      err.message
     );
     return null;
   }
 }
 
-// ─── Auto-end stale sessions ────────────────────────────────────────────
+// ─── Auto-end stale sessions ──────────────────────────────────────────
+
 async function autoEndSessionIfStale(session) {
   if (!session || session.status !== "ACTIVE") return session;
 
@@ -115,6 +130,22 @@ async function autoEndSessionIfStale(session) {
     finalSession.endTime = finalSession.endTime || new Date();
     await finalSession.save();
 
+    // ⭐ Auto-close attendance too, so an FSE who forgot to tap END DAY
+    // doesn't stay "WORKING" forever. Best-effort: failure here must not
+    // prevent the session auto-end.
+    try {
+      await upsertCheckOut({
+        employeeId: finalSession.userId,
+        when: finalSession.endTime || new Date(),
+        location: null,
+      });
+    } catch (attErr) {
+      console.error(
+        "⚠️ Could not auto-close attendance on stale session:",
+        attErr.message
+      );
+    }
+
     console.log(`🧹 Auto-ended session ${finalSession._id}`);
     return finalSession;
   });
@@ -138,7 +169,7 @@ async function cleanupStaleSessions() {
 cleanupStaleSessions();
 setInterval(cleanupStaleSessions, CLEANUP_INTERVAL_MS);
 
-// ─── GET ALL SESSIONS ────────────────────────────────────────────────────
+// ─── GET ALL SESSIONS ──────────────────────────────────────────────────
 router.get("/", async (req, res) => {
   try {
     const page = parseInt(req.query.page, 10) || 1;
@@ -146,12 +177,14 @@ router.get("/", async (req, res) => {
     const skip = (page - 1) * limit;
     const { userId, status } = req.query;
     const filter = {};
+
     // Visibility: self + people below me (Admin: everyone).
     if (userId) {
       if (!(await canViewUser(req.user, userId))) {
-        return res
-          .status(403)
-          .json({ success: false, message: "You are not allowed to view this user" });
+        return res.status(403).json({
+          success: false,
+          message: "You are not allowed to view this user",
+        });
       }
       filter.userId = String(userId);
     } else if (req.user.role !== "Admin") {
@@ -169,8 +202,8 @@ router.get("/", async (req, res) => {
       Session.countDocuments(filter),
     ]);
 
-    // ✅ FIX: Ensure pointCount and totalDistanceKm are populated
-    const enrichedSessions = sessions.map(session => ({
+    // ✅ Ensure pointCount and totalDistanceKm are populated
+    const enrichedSessions = sessions.map((session) => ({
       ...session,
       pointCount: session.pointCount ?? 0,
       totalDistanceKm: session.totalDistanceKm ?? 0,
@@ -225,9 +258,10 @@ router.get("/today/:userId", requireUserAccess, async (req, res) => {
     res.json(session);
   } catch (err) {
     console.log("❌ Error in /today/:userId:", err);
-    res
-      .status(500)
-      .json({ message: "Error checking session", error: err.message });
+    res.status(500).json({
+      message: "Error checking session",
+      error: err.message,
+    });
   }
 });
 
@@ -256,19 +290,34 @@ router.get("/orphaned/:userId", requireUserAccess, async (req, res) => {
     res.json(rebuilt || orphaned);
   } catch (err) {
     console.log("❌ Error checking orphaned session:", err.message);
-    res
-      .status(500)
-      .json({ message: "Error checking orphaned session", error: err.message });
+    res.status(500).json({
+      message: "Error checking orphaned session",
+      error: err.message,
+    });
   }
 });
 
-// ─── START SESSION ──────────────────────────────────────────────────────
+// ─── START SESSION (+ ATTENDANCE CHECK-IN) ──────────────────────────────
+//
+// Existing FSE behaviour is preserved:
+//   • Creates (or returns today's existing) Session
+//   • Saves the start point to Location
+//   • Starts the native GPS tracking flow (client side)
+//
+// NEW: creates/updates the FSE's Attendance for today, with the Session
+// id linked. Wrapped in a Mongo transaction so Session and Attendance
+// either both land or neither does. Falls back to sequential writes
+// when the deployment doesn't support transactions (same pattern as
+// purchaseController.createPurchaseEntry).
+//
 router.post("/start", requireTrackedRole, async (req, res) => {
+  const mongoSession = await mongoose.startSession();
+
   try {
     const { latitude, longitude } = req.body;
-    const userId = String(req.user.id); // never trust a userId sent by the client
+    const userId = String(req.user.id); // never trust a client userId
 
-    if (!userId || userId.toString().trim() === "") {
+    if (!userId || userId.trim() === "") {
       return res.status(400).json({ message: "userId is required" });
     }
     if (latitude === undefined || latitude === null || latitude === "") {
@@ -290,53 +339,115 @@ router.post("/start", requireTrackedRole, async (req, res) => {
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
 
-    const existingSession = await Session.findOne({
-      userId,
-      status: { $in: ["ACTIVE", "AUTO_ENDED"] },
-      startTime: { $gte: startOfDay, $lte: endOfDay },
-    });
+    // ── The actual work — runnable inside or outside a transaction ──
+    const doWork = async (session) => {
+      const sess = session || null; // Mongo session or null
 
-    if (existingSession) {
-      console.log(
-        `⚠️ Session already exists for today - sessionId: ${existingSession._id}`,
-      );
-      return res.json(existingSession);
-    }
-
-    const lockedStartLocation = { latitude: lat, longitude: lng };
-
-    const session = new Session({
-      userId,
-      startLocation: lockedStartLocation,
-      route: [{ latitude: lat, longitude: lng, timestamp: new Date() }],
-      status: "ACTIVE",
-      totalDistanceKm: 0,
-      pointCount: 1,
-    });
-
-    const savedSession = await session.save();
-    console.log(`✅ Session created - sessionId: ${savedSession._id}`);
-
-    try {
-      await Location.create({
+      // 1. Reuse today's existing session if there is one
+      const existingSession = await Session.findOne({
         userId,
+        status: { $in: ["ACTIVE", "AUTO_ENDED"] },
+        startTime: { $gte: startOfDay, $lte: endOfDay },
+      }).session(sess);
+
+      let savedSession = existingSession;
+
+      // 2. Otherwise create a new one (identical to old behaviour)
+      if (!savedSession) {
+        const lockedStartLocation = { latitude: lat, longitude: lng };
+
+        const created = await Session.create(
+          [
+            {
+              userId,
+              startLocation: lockedStartLocation,
+              route: [{ latitude: lat, longitude: lng, timestamp: new Date() }],
+              status: "ACTIVE",
+              totalDistanceKm: 0,
+              pointCount: 1,
+            },
+          ],
+          sess ? { session: sess } : undefined
+        );
+        savedSession = created[0];
+        console.log(`✅ Session created - sessionId: ${savedSession._id}`);
+
+        // 3. Save start point to Location (unchanged behaviour)
+        try {
+          await Location.create(
+            [
+              {
+                userId,
+                sessionId: savedSession._id,
+                latitude: lat,
+                longitude: lng,
+                timestamp: savedSession.startTime,
+                accuracy: 0,
+              },
+            ],
+            sess ? { session: sess } : undefined
+          );
+          console.log(
+            `✅ Start point saved to Location for session ${savedSession._id}`
+          );
+        } catch (locErr) {
+          console.error(
+            "⚠️ Could not save start point to Location:",
+            locErr.message
+          );
+        }
+      } else {
+        console.log(
+          `⚠️ Session already exists for today - sessionId: ${existingSession._id}`
+        );
+      }
+
+      // 4. ⭐ FSE Attendance — the START DAY is the FSE Check-In.
+      //    Idempotent: if the FSE already checked in today, this is a no-op
+      //    and just returns the existing attendance record.
+      const { attendance, alreadyCheckedIn } = await upsertCheckIn({
+        employeeId: userId,
+        when: savedSession.startTime || new Date(),
+        location: { latitude: lat, longitude: lng, accuracy: 0 },
         sessionId: savedSession._id,
-        latitude: lat,
-        longitude: lng,
-        timestamp: savedSession.startTime,
-        accuracy: 0,
       });
-      console.log(
-        `✅ Start point saved to Location for session ${savedSession._id}`,
-      );
-    } catch (locErr) {
-      console.error(
-        "⚠️ Could not save start point to Location:",
-        locErr.message,
-      );
+
+      return { session: savedSession, attendance, alreadyCheckedIn };
+    };
+
+    // ── Try transactional path first ────────────────────────────────
+    let result;
+    try {
+      await mongoSession.withTransaction(async () => {
+        result = await doWork(mongoSession);
+      });
+    } catch (txErr) {
+      const msg = txErr?.message || "";
+      const transactionsUnsupported =
+        /Transaction numbers|IllegalOperation|replica set|not supported|Mongos/i.test(
+          msg
+        );
+
+      if (transactionsUnsupported) {
+        console.warn(
+          "MongoDB transactions unsupported on this deployment — falling back to sequential (non-transactional) save:",
+          msg
+        );
+        result = await doWork(null);
+      } else {
+        throw txErr;
+      }
     }
 
-    res.status(201).json(savedSession);
+    // ── Response ────────────────────────────────────────────────────
+    // Return the Session as the top-level payload (same shape as before
+    // so any existing client code that reads `response.data._id` etc.
+    // keeps working). Attendance is included as an extra field.
+    res.status(201).json({
+      ...result.session.toObject(),
+      attendance: result.attendance,
+      alreadyCheckedIn: result.alreadyCheckedIn,
+    });
   } catch (err) {
     console.log("❌ ERROR in /start:", err.message);
     res.status(500).json({
@@ -344,25 +455,34 @@ router.post("/start", requireTrackedRole, async (req, res) => {
       error: err.message,
       details: err.name === "ValidationError" ? err.errors : null,
     });
+  } finally {
+    mongoSession.endSession();
   }
 });
 
-// ─── END SESSION ────────────────────────────────────────────────────────
+// ─── END SESSION (+ ATTENDANCE CHECK-OUT) ───────────────────────────────
 router.post("/end", requireTrackedRole, async (req, res) => {
   try {
     const { sessionId, finalLocation } = req.body;
     if (!sessionId) {
       return res.status(400).json({ message: "Session ID required" });
     }
+
     // Only the owner can end their own day.
-    const ownsSession = await Session.exists({ _id: sessionId, userId: String(req.user.id) });
+    const ownsSession = await Session.exists({
+      _id: sessionId,
+      userId: String(req.user.id),
+    });
     if (!ownsSession) {
-      return res.status(403).json({ message: "This session does not belong to you" });
+      return res
+        .status(403)
+        .json({ message: "This session does not belong to you" });
     }
 
     console.log(`📤 Ending session: ${sessionId}`);
 
     const session = await runExclusive(sessionId, async () => {
+      // 1. Save final location if provided (unchanged behaviour)
       if (finalLocation && finalLocation.latitude && finalLocation.longitude) {
         try {
           const existing = await Session.findById(sessionId)
@@ -384,27 +504,48 @@ router.post("/end", requireTrackedRole, async (req, res) => {
         }
       }
 
+      // 2. Rebuild route from all Location points (unchanged)
       const rebuilt = await rebuildSessionRoute(sessionId);
-      if (rebuilt) {
-        const updated = await Session.findByIdAndUpdate(
-          sessionId,
-          {
-            status: "ENDED",
-            endTime: new Date(),
-          },
-          { new: true },
-        );
-        return updated;
-      }
 
+      // 3. Mark session ENDED (unchanged)
       const updated = await Session.findByIdAndUpdate(
         sessionId,
         {
           status: "ENDED",
           endTime: new Date(),
         },
-        { new: true },
+        { new: true }
       );
+
+      // 4. ⭐ Close the FSE's Attendance for today.
+      //    Best-effort: if attendance was never opened (e.g. legacy
+      //    session from before this feature existed), END DAY still
+      //    succeeds — the FSE can't be blocked from closing their day
+      //    because of an HR record.
+      if (updated) {
+        try {
+          await upsertCheckOut({
+            employeeId: updated.userId,
+            when: updated.endTime || new Date(),
+            location:
+              finalLocation &&
+              finalLocation.latitude != null &&
+              finalLocation.longitude != null
+                ? {
+                    latitude: finalLocation.latitude,
+                    longitude: finalLocation.longitude,
+                    accuracy: 0,
+                  }
+                : null,
+          });
+        } catch (attErr) {
+          console.error(
+            "⚠️ Could not close attendance on END DAY:",
+            attErr.message
+          );
+        }
+      }
+
       return updated;
     });
 
@@ -413,14 +554,15 @@ router.post("/end", requireTrackedRole, async (req, res) => {
     }
 
     console.log(
-      `✅ Session ended - ${sessionId}, Distance: ${session.totalDistanceKm}km, Points: ${session.pointCount}`,
+      `✅ Session ended - ${sessionId}, Distance: ${session.totalDistanceKm}km, Points: ${session.pointCount}`
     );
     res.json(session);
   } catch (err) {
     console.error("❌ Error ending session:", err.message);
-    res
-      .status(500)
-      .json({ message: "Error ending session", error: err.message });
+    res.status(500).json({
+      message: "Error ending session",
+      error: err.message,
+    });
   }
 });
 
@@ -460,7 +602,7 @@ router.get("/:sessionId", requireSessionAccess(), async (req, res) => {
     const routePage = parseInt(req.query.routePage, 10) || null;
     const routeLimit = Math.min(
       parseInt(req.query.routeLimit, 10) || 1000,
-      5000,
+      5000
     );
 
     let session = await Session.findById(sessionId);
@@ -468,9 +610,9 @@ router.get("/:sessionId", requireSessionAccess(), async (req, res) => {
       return res.status(404).json({ message: "Session not found" });
     }
 
-    // ✅ FIX: Always rebuild route for ACTIVE or AUTO_ENDED sessions
-    const shouldRebuild = 
-      session.status === "ACTIVE" || 
+    // ✅ Always rebuild route for ACTIVE or AUTO_ENDED sessions
+    const shouldRebuild =
+      session.status === "ACTIVE" ||
       session.status === "AUTO_ENDED" ||
       (session.route?.length === 0 && session.pointCount > 0);
 
@@ -481,10 +623,11 @@ router.get("/:sessionId", requireSessionAccess(), async (req, res) => {
       });
       if (rebuilt) {
         session = rebuilt;
-        console.log(`✅ Route rebuilt: ${session.route?.length || 0} points, ${session.totalDistanceKm}km`);
+        console.log(
+          `✅ Route rebuilt: ${session.route?.length || 0} points, ${session.totalDistanceKm}km`
+        );
       } else {
         console.log(`⚠️ No locations found for session ${sessionId}`);
-        // ✅ Even if no locations, ensure pointCount is correct
         if (session.pointCount === 0 && session.route?.length > 0) {
           session.pointCount = session.route.length;
           await session.save();
@@ -508,7 +651,8 @@ router.get("/:sessionId", requireSessionAccess(), async (req, res) => {
       const sessionObj = session.toObject();
       const start = (routePage - 1) * routeLimit;
       const totalPoints = sessionObj.route?.length || 0;
-      sessionObj.route = sessionObj.route?.slice(start, start + routeLimit) || [];
+      sessionObj.route =
+        sessionObj.route?.slice(start, start + routeLimit) || [];
       sessionObj.routePagination = {
         page: routePage,
         limit: routeLimit,
@@ -531,9 +675,10 @@ router.get("/:sessionId", requireSessionAccess(), async (req, res) => {
     res.json(response);
   } catch (err) {
     console.error("❌ Error fetching session:", err.message);
-    res
-      .status(500)
-      .json({ message: "Error fetching session", error: err.message });
+    res.status(500).json({
+      message: "Error fetching session",
+      error: err.message,
+    });
   }
 });
 
@@ -542,27 +687,27 @@ router.post("/fix-sessions", requireAdmin, async (req, res) => {
   try {
     const sessions = await Session.find({
       pointCount: 0,
-      status: { $in: ["ENDED", "AUTO_ENDED"] }
+      status: { $in: ["ENDED", "AUTO_ENDED"] },
     });
-    
+
     let fixed = 0;
     for (const session of sessions) {
       const count = session.route?.length || 0;
       if (count > 0) {
-        await Session.findByIdAndUpdate(session._id, { 
+        await Session.findByIdAndUpdate(session._id, {
           pointCount: count,
-          totalDistanceKm: session.totalDistanceKm || 0
+          totalDistanceKm: session.totalDistanceKm || 0,
         });
         fixed++;
         console.log(`✅ Fixed session ${session._id}: ${count} points`);
       }
     }
-    
-    res.json({ 
-      success: true, 
-      fixed, 
+
+    res.json({
+      success: true,
+      fixed,
       total: sessions.length,
-      message: `Fixed ${fixed} sessions with missing pointCount`
+      message: `Fixed ${fixed} sessions with missing pointCount`,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

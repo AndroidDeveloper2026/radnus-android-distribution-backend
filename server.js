@@ -89,10 +89,12 @@ app.use("/api/suppliers", require("./routes/supplierRoutes"));
 app.use("/api/purchases", require("./routes/purchaseRoutes"));
 app.use("/api/salespersons", require("./routes/salespersonRoutes"));
 app.use("/api/app", require("./routes/appVersionRoutes"));
+app.use("/api/attendance", require("./routes/attendanceRoutes"));
 console.log("✅ All routes registered");
 
 const startAutoEndJob = require("./cron/autoEndDay");
 startAutoEndJob();
+require("./cron/markAbsent").start();
 
 // ✅ SOCKET.IO CONNECTION (JWT required; superiors get rooms)
 attachSocketAuth(io);
