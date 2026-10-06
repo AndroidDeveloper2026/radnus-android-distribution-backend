@@ -90,6 +90,7 @@ app.use("/api/purchases", require("./routes/purchaseRoutes"));
 app.use("/api/salespersons", require("./routes/salespersonRoutes"));
 app.use("/api/app", require("./routes/appVersionRoutes"));
 app.use("/api/attendance", require("./routes/attendanceRoutes"));
+app.use("/api/visit-reports", require("./routes/visitReportRoutes"));
 console.log("✅ All routes registered");
 
 const startAutoEndJob = require("./cron/autoEndDay");
