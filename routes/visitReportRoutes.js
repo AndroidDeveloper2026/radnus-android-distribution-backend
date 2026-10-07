@@ -12,7 +12,7 @@ router.get("/my-history", ctrl.getMyHistory);
 // Admin / Manager
 router.get("/", ctrl.listVisitReports);
 router.get("/summary", ctrl.getSummary);
-router.get("/check-mobile/:mobile", ctrl.checkMobile);
+router.get("/check-duplicate", ctrl.checkDuplicate);
 
 // Detail / edit / delete
 router.get("/:id", ctrl.getVisitReportById);

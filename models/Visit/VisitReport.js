@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { normKey } = require("../../utils/visitKeys");
 
 const visitReportSchema = new mongoose.Schema(
   {
@@ -10,6 +11,14 @@ const visitReportSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Snapshot of the submitter at the time of the visit. Kept on the
+    // report so history stays correct even if the user is renamed,
+    // re-assigned or deleted (several managers / executives can visit
+    // the same shop — we always know exactly who did which visit).
+    executiveName: { type: String, trim: true, default: "" },
+    executiveRole: { type: String, trim: true, default: "" },
+    executiveMobile: { type: String, trim: true, default: "" },
+
     // ── Customer info (your field list) ────────────────────────────
     name: { type: String, required: true, trim: true },
     businessName: { type: String, required: true, trim: true },
@@ -20,6 +29,10 @@ const visitReportSchema = new mongoose.Schema(
       trim: true,
       match: /^[6-9]\d{9}$/,
     },
+
+    // Normalised copies used for duplicate / revisit matching (auto-filled)
+    nameKey: { type: String, index: true, default: "" },
+    businessKey: { type: String, index: true, default: "" },
 
     taluk: { type: String, required: true, trim: true },
     district: { type: String, required: true, trim: true },
@@ -95,6 +108,12 @@ visitReportSchema.pre("save", function () {
     const m = String(d.getUTCMonth() + 1).padStart(2, "0");
     const day = String(d.getUTCDate()).padStart(2, "0");
     this.visitDateKey = `${y}-${m}-${day}`;
+  }
+  if (this.isNew || this.isModified("name")) {
+    this.nameKey = normKey(this.name);
+  }
+  if (this.isNew || this.isModified("businessName")) {
+    this.businessKey = normKey(this.businessName);
   }
 });
 
