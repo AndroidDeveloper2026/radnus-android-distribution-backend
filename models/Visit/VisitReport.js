@@ -1,3 +1,4 @@
+
 const mongoose = require("mongoose");
 
 const visitReportSchema = new mongoose.Schema(
@@ -86,7 +87,7 @@ visitReportSchema.index({ visitDateKey: -1, statusFlow: 1 });
 visitReportSchema.index({ district: 1, taluk: 1 });
 
 // Auto-fill visitDateKey in IST before save if not set
-visitReportSchema.pre("save", function (next) {
+visitReportSchema.pre("save", function () {
   if (!this.visitDateKey && this.submittedAt) {
     const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
     const d = new Date(new Date(this.submittedAt).getTime() + IST_OFFSET_MS);
@@ -95,7 +96,6 @@ visitReportSchema.pre("save", function (next) {
     const day = String(d.getUTCDate()).padStart(2, "0");
     this.visitDateKey = `${y}-${m}-${day}`;
   }
-  next();
 });
 
 module.exports = mongoose.model("VisitReport", visitReportSchema);
