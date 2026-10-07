@@ -1,4 +1,3 @@
-
 const mongoose = require("mongoose");
 
 const visitReportSchema = new mongoose.Schema(
@@ -85,6 +84,7 @@ const visitReportSchema = new mongoose.Schema(
 visitReportSchema.index({ executiveId: 1, visitDateKey: -1 });
 visitReportSchema.index({ visitDateKey: -1, statusFlow: 1 });
 visitReportSchema.index({ district: 1, taluk: 1 });
+visitReportSchema.index({ mobile: 1, submittedAt: 1 }); // revisit lookups
 
 // Auto-fill visitDateKey in IST before save if not set
 visitReportSchema.pre("save", function () {
