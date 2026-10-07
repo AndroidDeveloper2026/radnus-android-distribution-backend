@@ -12,6 +12,7 @@ router.get("/my-history", ctrl.getMyHistory);
 // Admin / Manager
 router.get("/", ctrl.listVisitReports);
 router.get("/summary", ctrl.getSummary);
+router.get("/executive-summary", ctrl.getExecutiveSummary);
 router.get("/check-duplicate", ctrl.checkDuplicate);
 
 // Detail / edit / delete

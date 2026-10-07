@@ -444,6 +444,142 @@ exports.listVisitReports = async (req, res) => {
 };
 
 // ═════════════════════════════════════════════════════════════════
+//  EXECUTIVE SUMMARY — GET /api/visit-reports/executive-summary
+//     ?from=YYYY-MM-DD&to=YYYY-MM-DD&role=MarketingManager|MarketingExecutive
+//  One row per manager / executive: how many reports they collected,
+//  Hot / Warm / Cold split, unique customers and last submission.
+//  Admin → everyone. Manager → themselves + their team.
+//  People with ZERO reports in the range are included (accountability).
+// ═════════════════════════════════════════════════════════════════
+const SUMMARY_ROLES = ["MarketingManager", "MarketingExecutive"];
+
+exports.getExecutiveSummary = async (req, res) => {
+  try {
+    const { from, to, role } = req.query;
+    const user = req.user;
+    const isAdmin = ADMIN_LIKE.includes(user.role);
+
+    // ── Scope ────────────────────────────────────────────────────
+    let scopeIds = null; // null = everyone (Admin)
+    if (!isAdmin) {
+      const subIds = await getSubordinateIds(user);
+      scopeIds = [String(user.id), ...subIds];
+    }
+
+    // ── Report match (date range on IST day key) ─────────────────
+    const match = {};
+    if (from || to) {
+      match.visitDateKey = {};
+      if (from) match.visitDateKey.$gte = from;
+      if (to) match.visitDateKey.$lte = to;
+    }
+    if (scopeIds) {
+      match.executiveId = {
+        $in: scopeIds
+          .filter((id) => mongoose.Types.ObjectId.isValid(id))
+          .map((id) => new mongoose.Types.ObjectId(id)),
+      };
+    }
+
+    const cnt = (flow) => ({
+      $sum: { $cond: [{ $eq: ["$statusFlow", flow] }, 1, 0] },
+    });
+
+    const grouped = await VisitReport.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: "$executiveId",
+          total: { $sum: 1 },
+          hot: cnt("HOT"),
+          warm: cnt("WARM"),
+          cold: cnt("COLD"),
+          mobiles: { $addToSet: "$mobile" },
+          lastSubmittedAt: { $max: "$submittedAt" },
+          snapName: { $last: "$executiveName" },
+          snapRole: { $last: "$executiveRole" },
+        },
+      },
+    ]);
+    const byExec = Object.fromEntries(grouped.map((g) => [String(g._id), g]));
+
+    // ── Roster: managers + executives in scope (even with 0 reports) ─
+    const rosterQuery = {
+      role: role && SUMMARY_ROLES.includes(role) ? role : { $in: SUMMARY_ROLES },
+      approvalStatus: "approved",
+      isActive: { $ne: false },
+    };
+    if (scopeIds) {
+      rosterQuery._id = {
+        $in: scopeIds.filter((id) => mongoose.Types.ObjectId.isValid(id)),
+      };
+    }
+    const roster = await Register.find(rosterQuery)
+      .select("name role mobile photo district taluk")
+      .lean();
+
+    // Anyone who submitted but is outside the roster roles (e.g. an FSE)
+    const rosterIds = new Set(roster.map((u) => String(u._id)));
+    const extraIds = Object.keys(byExec).filter((id) => !rosterIds.has(id));
+    const extras = extraIds.length
+      ? await Register.find({ _id: { $in: extraIds } })
+          .select("name role mobile photo district taluk")
+          .lean()
+      : [];
+
+    let people = [...roster, ...extras].map((u) => {
+      const g = byExec[String(u._id)];
+      return {
+        executiveId: u._id,
+        name: u.name,
+        role: u.role,
+        mobile: u.mobile || "",
+        photo: u.photo || null,
+        district: u.district || "",
+        total: g?.total || 0,
+        hot: g?.hot || 0,
+        warm: g?.warm || 0,
+        cold: g?.cold || 0,
+        uniqueCustomers: g ? g.mobiles.length : 0,
+        lastSubmittedAt: g?.lastSubmittedAt || null,
+      };
+    });
+
+    if (role && SUMMARY_ROLES.includes(role)) {
+      people = people.filter((p) => p.role === role);
+    }
+
+    people.sort(
+      (a, b) => b.total - a.total || String(a.name).localeCompare(String(b.name))
+    );
+
+    const totals = people.reduce(
+      (t, p) => ({
+        reports: t.reports + p.total,
+        hot: t.hot + p.hot,
+        warm: t.warm + p.warm,
+        cold: t.cold + p.cold,
+        active: t.active + (p.total > 0 ? 1 : 0),
+      }),
+      { reports: 0, hot: 0, warm: 0, cold: 0, active: 0 }
+    );
+    totals.people = people.length;
+    totals.inactive = people.length - totals.active;
+
+    return res.json({
+      success: true,
+      from: from || null,
+      to: to || null,
+      totals,
+      people,
+    });
+  } catch (err) {
+    console.error("getExecutiveSummary:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// ═════════════════════════════════════════════════════════════════
 //  SUMMARY  — GET /api/visit-reports/summary?date=
 //  Returns counts by statusFlow for a day (Admin/Manager dashboard).
 // ═════════════════════════════════════════════════════════════════
