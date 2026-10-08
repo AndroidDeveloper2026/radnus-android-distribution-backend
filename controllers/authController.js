@@ -1,3 +1,4 @@
+
 // controllers/authController.js
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -28,7 +29,7 @@ async function notifyApproversAboutNewRegistration(approverRole, user) {
     if (user.parentId) {
       filter = { _id: user.parentId, fcmToken: { $ne: null } };
     } else if (approverRole !== 'Admin') {
-      filter.approvalStatus = 'approved';
+      filter.approvalStatus = { $nin: ['pending', 'rejected'] }; // includes legacy accounts
     } else {
       filter.isApproved = true;
       filter.isVerified = true;
@@ -695,7 +696,7 @@ exports.refreshToken = async (req, res) => {
   }
 };
 
-//---------------- 05.10.26 --------------------
+//-------------------- 08.10.2026 --------------------------
 // // controllers/authController.js
 // const bcrypt = require("bcrypt");
 // const jwt = require("jsonwebtoken");
@@ -706,9 +707,13 @@ exports.refreshToken = async (req, res) => {
 // const resend = require("../config/resend");
 // const {
 //   getApproverRole,
+//   getApproverRoles,
 //   requiresApproval,
+//   requiresParentSelection,
 //   ROLE_LABELS,
 // } = require("../utils/roleHierarchy");
+// const mongoose = require("mongoose");
+// const { getEligibleParents } = require("./hierarchyController");
 
 // // Notify every active/approved user holding `approverRole` that a new
 // // registration in `user.role` needs their review. Works for Admin and
@@ -717,8 +722,11 @@ exports.refreshToken = async (req, res) => {
 // // that role are notified.
 // async function notifyApproversAboutNewRegistration(approverRole, user) {
 //   try {
-//     const filter = { role: approverRole, fcmToken: { $ne: null } };
-//     if (approverRole !== 'Admin') {
+//     // If the new user picked a specific superior, notify only that person.
+//     let filter = { role: approverRole, fcmToken: { $ne: null } };
+//     if (user.parentId) {
+//       filter = { _id: user.parentId, fcmToken: { $ne: null } };
+//     } else if (approverRole !== 'Admin') {
 //       filter.approvalStatus = 'approved';
 //     } else {
 //       filter.isApproved = true;
@@ -764,6 +772,7 @@ exports.refreshToken = async (req, res) => {
 //       password,
 //       confirmPassword,
 //       fcmToken,
+//       parentId,
 //     } = req.body;
 
 //     if (!fcmToken) {
@@ -801,7 +810,26 @@ exports.refreshToken = async (req, res) => {
 //     // parent/individual needs to be picked — any user holding the
 //     // correct approver role can review and approve the request.
 //     const needsApproval = requiresApproval(role);
-//     const approverRole = getApproverRole(role);
+//     let approverRole = getApproverRole(role);
+//     let validatedParentId = null;
+
+//     // ⭐ Hierarchy: these roles must say WHO their superior is.
+//     if (requiresParentSelection(role)) {
+//       if (!parentId || !mongoose.Types.ObjectId.isValid(parentId)) {
+//         return res.status(400).json({ message: "Please select your superior" });
+//       }
+//       const parent = await Register.findById(parentId).select("role approvalStatus isActive");
+//       if (
+//         !parent ||
+//         parent.approvalStatus !== "approved" ||
+//         parent.isActive === false ||
+//         !getApproverRoles(role).includes(parent.role)
+//       ) {
+//         return res.status(400).json({ message: "Selected superior is not valid for this role" });
+//       }
+//       validatedParentId = parent._id;
+//       approverRole = parent.role;
+//     }
 
 //     // Save user
 //     const user = new Register({
@@ -814,6 +842,7 @@ exports.refreshToken = async (req, res) => {
 //       mobile,
 //       password,
 //       fcmToken,
+//       parentId: validatedParentId,
 //       approvalStatus: needsApproval ? 'pending' : 'approved',
 //       isApproved: !needsApproval,
 //       isVerified: false,
@@ -901,30 +930,8 @@ exports.refreshToken = async (req, res) => {
 //   }
 // };
 
-// // GET ELIGIBLE PARENT/APPROVER LIST (for registration picker)
-// exports.getEligibleParents = async (req, res) => {
-//   try {
-//     const { role } = req.query;
-//     if (!role) {
-//       return res.status(400).json({ message: "role query param required" });
-//     }
-
-//     const approverRole = getApproverRole(role);
-//     if (!approverRole || !requiresParentSelection(role)) {
-//       return res.json([]); // no specific parent selection needed for this role
-//     }
-
-//     const parents = await Register.find({
-//       role: approverRole,
-//       approvalStatus: 'approved',
-//       isActive: { $ne: false },
-//     }).select('name email mobile district state taluk role');
-
-//     res.json(parents);
-//   } catch (error) {
-//     res.status(500).json({ message: error.message });
-//   }
-// };
+// // GET ELIGIBLE PARENT/APPROVER LIST (registration picker) – see hierarchyController
+// exports.getEligibleParents = getEligibleParents;
 
 // // VERIFY OTP
 // exports.verifyOtp = async (req, res) => {
