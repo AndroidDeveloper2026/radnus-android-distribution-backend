@@ -139,10 +139,10 @@ exports.getPolicy = (req, res) => {
 
 // ── Admin / Manager ────────────────────────────────────────────────────
 
-// GET /api/attendance?date=&status=&role=&search=&page=&limit=
+// GET /api/attendance?date=&from=&to=&status=&role=&search=&page=&limit=
 exports.listAttendance = async (req, res) => {
   try {
-    const { date, status, role, search, page = 1, limit = 50 } = req.query;
+    const { date, from, to, status, role, search, page = 1, limit = 50 } = req.query;
     const user = req.user;
 
     let scopeIds = null;
@@ -153,7 +153,14 @@ exports.listAttendance = async (req, res) => {
     }
 
     const q = {};
-    if (date) q.date = date;
+    if (date) {
+      q.date = date;
+    } else if (from || to) {
+      // date range (YYYY-MM-DD strings compare correctly)
+      q.date = {};
+      if (from) q.date.$gte = from;
+      if (to) q.date.$lte = to;
+    }
     if (status) q.status = status;
 
     if (scopeIds) {
@@ -204,13 +211,23 @@ exports.listAttendance = async (req, res) => {
   }
 };
 
-// GET /api/attendance/summary?date=YYYY-MM-DD
+// GET /api/attendance/summary?date=YYYY-MM-DD   (one day)
+// GET /api/attendance/summary?from=YYYY-MM-DD&to=YYYY-MM-DD   (range)
 exports.getSummary = async (req, res) => {
   try {
+    const { from, to } = req.query;
+    const isRange = !req.query.date && (from || to);
     const date = req.query.date || istDateKey();
 
+    let dateMatch = date;
+    if (isRange) {
+      dateMatch = {};
+      if (from) dateMatch.$gte = from;
+      if (to) dateMatch.$lte = to;
+    }
+
     const raw = await Attendance.aggregate([
-      { $match: { date } },
+      { $match: { date: dateMatch } },
       { $group: { _id: "$status", count: { $sum: 1 } } },
     ]);
 
@@ -230,18 +247,26 @@ exports.getSummary = async (req, res) => {
 
     const [workingNow, checkedOut] = await Promise.all([
       Attendance.countDocuments({
-        date,
+        date: dateMatch,
         checkInTime: { $ne: null },
         checkOutTime: null,
         status: { $in: ["PRESENT", "LATE"] },
       }),
       Attendance.countDocuments({
-        date,
+        date: dateMatch,
         checkOutTime: { $ne: null },
       }),
     ]);
 
-    return res.json({ success: true, date, summary, workingNow, checkedOut });
+    return res.json({
+      success: true,
+      date: isRange ? null : date,
+      from: isRange ? from || null : null,
+      to: isRange ? to || null : null,
+      summary,
+      workingNow,
+      checkedOut,
+    });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
@@ -401,7 +426,7 @@ exports.correctAttendance = async (req, res) => {
   }
 };
 
-//-------------- 08.10.26 before change-----------------------
+//------------------ 09.10.26 -------------------------
 // const mongoose = require("mongoose");
 // const Attendance = require("../models/Attendance/Attendance");
 // const Register = require("../models/Register");
@@ -534,7 +559,6 @@ exports.correctAttendance = async (req, res) => {
 //       workStartMinute: policy.workStartMinute,
 //       workEndHour: policy.workEndHour,
 //       workEndMinute: policy.workEndMinute,
-//       lateGraceMinutes: policy.lateGraceMinutes,
 //       fullDayMinutes: policy.fullDayMinutes,
 //       halfDayMinutes: policy.halfDayMinutes,
 //       weeklyOffDays: policy.weeklyOffDays,
@@ -621,7 +645,6 @@ exports.correctAttendance = async (req, res) => {
 
 //     const summary = {
 //       PRESENT: 0,
-//       LATE: 0,
 //       HALF_DAY: 0,
 //       ABSENT: 0,
 //       ON_LEAVE: 0,
@@ -629,7 +652,9 @@ exports.correctAttendance = async (req, res) => {
 //       WEEK_OFF: 0,
 //     };
 //     raw.forEach((r) => {
-//       if (r._id in summary) summary[r._id] = r.count;
+//       // Old records saved as LATE are counted as a normal Full Day.
+//       const key = r._id === "LATE" ? "PRESENT" : r._id;
+//       if (key in summary) summary[key] += r.count;
 //     });
 
 //     const [workingNow, checkedOut] = await Promise.all([
@@ -669,7 +694,6 @@ exports.correctAttendance = async (req, res) => {
 //     const summary = {
 //       workingDays: 0,
 //       present: 0,
-//       late: 0,
 //       halfDay: 0,
 //       absent: 0,
 //       onLeave: 0,
@@ -678,8 +702,10 @@ exports.correctAttendance = async (req, res) => {
 //     };
 //     items.forEach((it) => {
 //       switch (it.status) {
-//         case "PRESENT": summary.present++; break;
-//         case "LATE": summary.late++; break;
+//         case "PRESENT":
+//         case "LATE": // legacy records → Full Day
+//           summary.present++;
+//           break;
 //         case "HALF_DAY": summary.halfDay++; break;
 //         case "ABSENT": summary.absent++; break;
 //         case "ON_LEAVE": summary.onLeave++; break;
@@ -688,11 +714,11 @@ exports.correctAttendance = async (req, res) => {
 //       }
 //     });
 //     summary.workingDays =
-//       summary.present + summary.late + summary.halfDay + summary.absent;
+//       summary.present + summary.halfDay + summary.absent;
 
 //     const attendancePct = summary.workingDays
 //       ? Math.round(
-//           (((summary.present + summary.late + summary.halfDay * 0.5) /
+//           (((summary.present + summary.halfDay * 0.5) /
 //             summary.workingDays) *
 //             100) *
 //             100
